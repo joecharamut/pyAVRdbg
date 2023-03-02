@@ -12,12 +12,13 @@ from debugger import Debugger
 
 
 logger = logging.getLogger(__name__)
+SIGTRAP = "S05"
 
 
 class GDBStub:
     def __init__(self, device_name: str, host: str, port: int) -> None:
-        self.dbg = Debugger(device_name)
         self.dev = deviceinfo.getdeviceinfo(device_name)
+        self.dbg = Debugger(device_name)
         self.host = host
         self.port = port
         self.conn = None
@@ -30,6 +31,14 @@ class GDBStub:
         exit(0)
 
     def listen_for_connection(self) -> None:
+        self.dbg.stop()
+        self.dbg.breakpointSWClearAll()
+        self.dbg.breakpointHWClear()
+
+        # consume pending events
+        while _event := self.dbg.pollEvent():
+            pass
+
         logger.info(f"Waiting for GDB session on {self.host}:{self.port}")
         signal.signal(signal.SIGINT, self.signal_handler)
 
@@ -53,9 +62,8 @@ class GDBStub:
                         print(event)
                         event_type, pc, break_cause = event
                         if event_type == avr8protocol.Avr8Protocol.EVT_AVR8_BREAK and break_cause == 1:
-                            # S05 = gdb SIGTRAP
-                            self.send("S05")
-                            self.last_signal = "S05"
+                            self.send(SIGTRAP)
+                            self.last_signal = SIGTRAP
 
     def send(self, packet_data: str) -> None:
         self.last_packet = packet_data
@@ -89,8 +97,8 @@ class GDBStub:
             "q": self.handle_query,
             "s": self.handle_step,
             "c": self.handle_continue,
-            "z": self.handle_add_break,
-            "Z": self.handle_remove_break,
+            "Z": self.handle_add_break,
+            "z": self.handle_remove_break,
             "m": self.handle_read_mem,
             "M": self.handle_write_mem,
             "g": self.handle_read_regs,
@@ -111,7 +119,7 @@ class GDBStub:
     def handle_halt_query(self, _command: str) -> None:
         self.send(self.last_signal)
 
-    def handle_query(self, command) -> None:
+    def handle_query(self, command: str) -> None:
         if len(command) == 0:
             self.send("")
         elif command == "Attached":
@@ -127,4 +135,85 @@ class GDBStub:
             self.send("Text=000;Data=000;Bss=000")
         else:
             self.send("")
+
+    def handle_step(self, command: str) -> None:
+        # TODO: Make s behavior more in line with GDB docs
+        # "addr is address to resume. If addr is omitted, resume at same address."
+        if len(command):
+            addr = int(command, 16)
+            print(f"{command=} {addr=:02x}")
+        self.dbg.step()
+        self.send(SIGTRAP)
+        self.last_signal = SIGTRAP
+
+    def handle_continue(self, command: str) -> None:
+        if len(command):
+            addr = int(command, 16)
+            print(f"{command=} {addr=:02x}")
+        self.dbg.run()
+        # polledEvent = dbg.pollEvent()
+        # Check if its still running, report back SIGTRAP when break.
+        # while polledEvent == None:
+        #    polledEvent = dbg.pollEvent()
+        # debug_check_running = dbg.readRunningState()
+        # while debug_check_running:
+        #    debug_check_running = dbg.readRunningState()
+        # sendPacket(socket, SIGTRAP)
+
+    def handle_add_break(self, command: str) -> None:
+        bp_type = command[0]
+        _, addr, length = command.split(",")
+        addr = int(addr, 16)
+        if bp_type == "0":
+            # SW breakpoint
+            self.dbg.breakpointSWSet(addr)
+            self.send("OK")
+        elif bp_type == "1":
+            # HW breakpoint
+            self.dbg.breakpointHWSet(addr)
+            self.send("OK")
+        else:
+            # Not Supported
+            self.send("")
+
+    def handle_remove_break(self, command: str) -> None:
+        bp_type = command[0]
+        _, addr, length = command.split(",")
+        addr = int(addr, 16)
+        if bp_type == "0":
+            # SW breakpoint
+            self.dbg.breakpointSWClear(addr)
+            self.send("OK")
+        elif bp_type == "1":
+            # HW breakpoint
+            self.dbg.breakpointHWClear()
+            self.send("OK")
+        else:
+            # Not Supported
+            self.send("")
+
+    def handle_read_mem(self, command: str) -> None:
+        pass
+
+    def handle_write_mem(self, command: str) -> None:
+        pass
+
+    def handle_read_regs(self, command: str) -> None:
+        pass
+
+    def handle_write_regs(self, command: str) -> None:
+        pass
+
+    def handle_kill(self, command: str) -> None:
+        pass
+
+    def handle_read_one_reg(self, command: str) -> None:
+        pass
+
+    def handle_write_one_reg(self, command: str) -> None:
+        pass
+
+
+
+
 

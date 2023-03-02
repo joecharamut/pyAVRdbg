@@ -25,7 +25,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.part == "help" or args.part == "":
-        ...
+        print("todo: list supported devices")
         exit(1)
 
     try:
@@ -37,7 +37,7 @@ if __name__ == "__main__":
     print(dev)
 
     gdb = gdbstub.GDBStub(args.part, args.host, args.port)
-
+    gdb.listen_for_connection()
     exit()
 
 

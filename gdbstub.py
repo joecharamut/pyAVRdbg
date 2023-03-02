@@ -3,7 +3,8 @@ import signal
 from socket import socket, AF_INET, SOCK_STREAM
 from select import select
 from types import FrameType
-from typing import Dict, Callable, Optional
+from typing import Dict, Callable, Optional, Tuple, List
+import enum
 
 from pyedbglib.protocols import avr8protocol
 from pymcuprog.deviceinfo import deviceinfo
@@ -14,6 +15,33 @@ from debugger import Debugger
 logger = logging.getLogger(__name__)
 SIGTRAP = "S05"
 
+
+class MemoryType(enum.Enum):
+    FLASH = enum.auto()
+    SRAM = enum.auto()
+    EEPROM = enum.auto()
+    FUSE = enum.auto()
+    LOCK = enum.auto()
+    SIG = enum.auto()
+    USRSIG = enum.auto()
+
+
+def get_memory_map(part: dict) -> Optional[List[Tuple[int, int, MemoryType]]]:
+    if "architecture" not in part:
+        logger.error("Error reading part memory map")
+        return None
+
+    if part["architecture"] == "avr8x":
+        return [
+            (part["flash_address_byte"], part["flash_size_bytes"], MemoryType.FLASH),
+            (part["eeprom_address_byte"], part["eeprom_size_bytes"], MemoryType.EEPROM),
+            (part["fuses_address_byte"], part["fuses_size_bytes"], MemoryType.FUSE),
+            (part["internal_sram_address_byte"], part["internal_sram_size_bytes"], MemoryType.SRAM),
+            (part["lockbits_address_byte"], part["lockbits_size_bytes"], MemoryType.LOCK),
+            (part["signatures_address_byte"], part["signatures_size_bytes"], MemoryType.SIG),
+            (part["user_row_address_byte"], part["user_row_size_bytes"], MemoryType.USRSIG),
+        ]
+    return None
 
 class GDBStub:
     def __init__(self, device_name: str, host: str, port: int) -> None:
@@ -56,9 +84,9 @@ class GDBStub:
                     if ready[0]:
                         data = conn.recv(1024)
                         if len(data) > 0:
-                            print("RX: " + data.decode("ascii"))
+                            print("<- " + data.decode("ascii"))
                             self.handle_packet(data)
-                    if event := self.dbg.pollEvent():
+                    while event := self.dbg.pollEvent():
                         print(event)
                         event_type, pc, break_cause = event
                         if event_type == avr8protocol.Avr8Protocol.EVT_AVR8_BREAK and break_cause == 1:
@@ -69,7 +97,7 @@ class GDBStub:
         self.last_packet = packet_data
         checksum = sum(packet_data.encode("ascii")) % 256
         message = f"${packet_data}#{checksum:02x}"
-        print(f"TX: {message}")
+        print(f"-> {message}")
         self.conn.sendall(message.encode("ascii"))
 
     def handle_packet(self, data: bytes) -> None:
@@ -81,19 +109,20 @@ class GDBStub:
                 if int(checksum, 16) != sum(packet_data.encode("ascii")) % 256:
                     print("Invalid Checksum!")
                     self.conn.sendall(b"-")
-                    print("TX: -")
+                    print("-> -")
                 else:
                     self.conn.sendall(b"+")
-                    print("TX: +")
+                    print("-> +")
                     self.handle_command(packet_data)
         elif data == b"\x03":
             self.dbg.stop()
             self.conn.sendall(b"+")
-            print("TX: +")
+            print("-> +")
 
     def handle_command(self, command: str) -> None:
         command_handlers: Dict[str, Callable[[str], None]] = {
             "?": self.handle_halt_query,
+            "!": self.handle_extended_enable,
             "q": self.handle_query,
             "s": self.handle_step,
             "c": self.handle_continue,
@@ -106,6 +135,7 @@ class GDBStub:
             "k": self.handle_kill,
             "p": self.handle_read_one_reg,
             "P": self.handle_write_one_reg,
+            "R": self.handle_restart,
         }
 
         key = command[0]
@@ -118,6 +148,9 @@ class GDBStub:
 
     def handle_halt_query(self, _command: str) -> None:
         self.send(self.last_signal)
+
+    def handle_extended_enable(self, _command: str) -> None:
+        self.send("OK")
 
     def handle_query(self, command: str) -> None:
         if len(command) == 0:
@@ -193,27 +226,84 @@ class GDBStub:
             self.send("")
 
     def handle_read_mem(self, command: str) -> None:
-        pass
+        addr, size = command.split(",")
+        addr = int(addr, 16)
+        size = int(size, 16)
+        data = None
+
+        for mem_base, mem_size, mem_type in get_memory_map(self.dev):
+            if mem_base <= addr <= (mem_base + mem_size):
+                print(addr, mem_type)
+                if mem_type == MemoryType.FLASH:
+                    data = self.dbg.readFlash(addr, size)
+                elif mem_type == MemoryType.SRAM:
+                    data = self.dbg.readSRAM(addr, size)
+                elif mem_type == MemoryType.EEPROM:
+                    data = self.dbg.readEEPROM(addr, size)
+                elif mem_type == MemoryType.FUSE:
+                    data = self.dbg.readFuse(addr, size)
+                elif mem_type == MemoryType.LOCK:
+                    data = self.dbg.readLock(addr, size)
+                elif mem_type == MemoryType.SIG:
+                    data = self.dbg.readSignature(addr, size)
+                elif mem_type == MemoryType.USRSIG:
+                    data = self.dbg.readUserSignature(addr, size)
+                self.send("".join([format(b, "02x") for b in data]))
+                return
+
+        self.send("")
 
     def handle_write_mem(self, command: str) -> None:
         pass
 
-    def handle_read_regs(self, command: str) -> None:
-        pass
+    def handle_read_regs(self, _command: str) -> None:
+        regs = self.dbg.readRegs()
+        sreg = self.dbg.readSREG()
+        sp = self.dbg.readStackPointer()
+
+        reg_string = ""
+        for r in regs:
+            reg_string += f"{r:02x}"
+        for r in sreg:
+            reg_string += f"{r:02x}"
+        for r in sp:
+            reg_string += f"{r:02x}"
+        self.send(reg_string)
 
     def handle_write_regs(self, command: str) -> None:
-        pass
+        # todo: implement
+        new_register_data = command
+        print(new_register_data)
+        self.send("")
 
-    def handle_kill(self, command: str) -> None:
-        pass
+    def handle_kill(self, _command: str) -> None:
+        self.dbg.reset()
 
     def handle_read_one_reg(self, command: str) -> None:
-        pass
+        if len(command):
+            reg_num = int(command, 16)
+            if reg_num == 34:
+                # GDB has register 34 as the program counter
+                pc = self.dbg.readProgramCounter()
+                print(pc)
+                print(hex(pc))
+                pc = pc << 1
+                print(hex(pc))
+                pcString = format(pc, '08x')
+                print(pcString)
+                pcByteAr = bytearray.fromhex(pcString.upper())
+                pcByteAr.reverse()
+                pcByteString = ''.join(format(x, '02x') for x in pcByteAr)
+                print(pcByteString)
+                self.send(pcByteString)
+                return
+        self.send("")
 
     def handle_write_one_reg(self, command: str) -> None:
         pass
 
-
+    def handle_restart(self, _command: str) -> None:
+        self.dbg.reset()
 
 
 

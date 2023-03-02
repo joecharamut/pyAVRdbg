@@ -1,4 +1,4 @@
-
+import logging
 import socket
 import debugger
 from pyedbglib.protocols import avr8protocol
@@ -7,12 +7,46 @@ import sys
 import time
 import select
 
+import argparse
+import pymcuprog
+from pymcuprog.deviceinfo import deviceinfo
+
+import gdbstub
+
+logger = logging.getLogger(__name__)
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(prog="pyAVRdbg")
+
+    parser.add_argument("-p", "--part", required=True, help="AVR Device to Debug")
+    parser.add_argument("-H", "--host", default="127.0.0.1", help="GDB Listening Address")
+    parser.add_argument("-P", "--port", type=int, default=12555, help="GDB Listening Port")
+
+    args = parser.parse_args()
+
+    if args.part == "help" or args.part == "":
+        ...
+        exit(1)
+
+    try:
+        dev = deviceinfo.getdeviceinfo(args.part)
+    except ImportError:
+        logger.error(f"Part not found: {args.part}")
+        exit(1)
+
+    print(dev)
+
+    gdb = gdbstub.GDBStub(args.part, args.host, args.port)
+
+    exit()
+
+
 HOST = '127.0.0.1'  # Standard loopback interface address (localhost)
 PORT = 12555        # Port to listen on (non-privileged ports are > 1023)
 
 lastPacket = ""
 
-dbg = debugger.Debugger("atmega4809")
+dbg = debugger.Debugger("attiny804")
 dbg.stop()
 dbg.breakpointSWClearAll()
 dbg.breakpointHWClear()
@@ -338,4 +372,8 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 if eventType == avr8protocol.Avr8Protocol.EVT_AVR8_BREAK and break_cause == 1:
                     sendPacket(conn, SIGTRAP)
                     last_SIGVAL = SIGTRAP
+
+
+
+
 

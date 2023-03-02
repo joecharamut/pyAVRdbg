@@ -44,8 +44,8 @@ class Debugger():
     def pollEvent(self):
         #eventRegister = self.eventReciver.poll_events()
         eventRegister = self.device.avr.protocol.poll_events()
-        #logging.info(eventRegister)
-        if eventRegister[0] == AvrCommand.AVR_EVENT: # Verifying data is an event
+        # logging.info(eventRegister)
+        if eventRegister and eventRegister[0] == AvrCommand.AVR_EVENT: # Verifying data is an event
             size = int.from_bytes(eventRegister[1:3], byteorder='big')
             if size != 0:
                 #event recived

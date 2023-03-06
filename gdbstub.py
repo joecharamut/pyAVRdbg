@@ -1,5 +1,7 @@
 import logging
+import re
 import signal
+import struct
 from socket import socket, AF_INET, SOCK_STREAM
 from select import select
 from types import FrameType
@@ -13,7 +15,6 @@ from debugger import Debugger
 
 
 logger = logging.getLogger(__name__)
-SIGTRAP = "S05"
 
 
 class MemoryType(enum.Enum):
@@ -43,87 +44,129 @@ def get_memory_map(part: dict) -> Optional[List[Tuple[int, int, MemoryType]]]:
         ]
     return None
 
+
+def calc_checksum(data: str | bytes) -> int:
+    if isinstance(data, str):
+        data = data.encode("ascii")
+    return sum(data) % 256
+
+
+class Signal(enum.IntEnum):
+    NONE = 0
+    SIGHUP = 1
+    SIGINT = 2
+    SIGQUIT = 3
+    SIGILL = 4
+    SIGTRAP = 5
+    SIGABRT = 6
+
+
 class GDBStub:
+    ACK = "+"
+    NACK = "-"
+
     def __init__(self, device_name: str, host: str, port: int) -> None:
         self.dev = deviceinfo.getdeviceinfo(device_name)
-        self.dbg = Debugger(device_name)
-        self.host = host
-        self.port = port
-        self.conn = None
-        self.last_packet = None
-        self.last_signal = "S00"
+        self.mem = deviceinfo.DeviceMemoryInfo(self.dev)
 
-    def signal_handler(self, sig: int, frame: Optional[FrameType]):
+        try:
+            self.dbg = Debugger(device_name)
+        except AttributeError:
+            raise RuntimeError("Could not open debugger") from None
+
+        self.address = (host, port)
+        self.sock = socket(AF_INET, SOCK_STREAM)
+        self.conn = None
+
+        self.last_packet = None
+        self.last_signal = Signal.NONE
+        self.send_ack = True
+
+    def signal_handler(self, _sig: int, _frame: Optional[FrameType]) -> None:
         print("You pressed Ctrl+C!")
-        self.dbg.cleanup()
-        exit(0)
+        self.quit()
 
     def listen_for_connection(self) -> None:
         self.dbg.stop()
         self.dbg.breakpointSWClearAll()
         self.dbg.breakpointHWClear()
 
-        # consume pending events
-        while _event := self.dbg.pollEvent():
+        while self.dbg.pollEvent():
+            # consume pending events
             pass
 
-        logger.info(f"Waiting for GDB session on {self.host}:{self.port}")
+        logger.info(f"Waiting for GDB session on {self.address[0]}:{self.address[1]}")
         signal.signal(signal.SIGINT, self.signal_handler)
 
-        with socket(AF_INET, SOCK_STREAM) as sock:
-            sock.bind((self.host, self.port))
-            sock.listen()
-            conn, addr = sock.accept()
-            conn.setblocking(False)
-            with conn:
-                print(f"Client connected: {addr}")
-                self.conn = conn
-                while True:
-                    # wait for conn to be readable
-                    ready = select([conn], [], [], 0.5)
-                    if ready[0]:
-                        data = conn.recv(1024)
-                        if len(data) > 0:
-                            print("<- " + data.decode("ascii"))
-                            self.handle_packet(data)
-                    while event := self.dbg.pollEvent():
-                        print(event)
-                        event_type, pc, break_cause = event
-                        if event_type == avr8protocol.Avr8Protocol.EVT_AVR8_BREAK and break_cause == 1:
-                            self.send(SIGTRAP)
-                            self.last_signal = SIGTRAP
+        self.sock.bind(self.address)
+        self.sock.listen()
 
-    def send(self, packet_data: str) -> None:
+        self.conn, addr = self.sock.accept()
+        self.conn.setblocking(False)
+
+        print(f"GDB Connected: {addr}")
+        try:
+            while True:
+                readable, _, _ = select([self.conn], [], [], 0.5)
+                for c in readable:
+                    if data := c.recv(4096):
+                        print(f"<- {data}")
+                        self.handle_packet(data)
+
+                while event := self.dbg.pollEvent():
+                    print(event)
+                    event_type, pc, break_cause = event
+                    if event_type == avr8protocol.Avr8Protocol.EVT_AVR8_BREAK and break_cause == 1:
+                        self.last_signal = Signal.SIGTRAP
+                        self.send(f"S{self.last_signal:02x}")
+        except Exception as exc:
+            self.quit(exc)
+
+    def quit(self, exc: Optional[Exception] = None) -> None:
+        self.dbg.cleanup()
+        self.conn.close()
+        self.sock.close()
+        if exc:
+            raise exc
+        exit(0)
+
+    def send(self, packet_data: str, raw: bool = False) -> None:
         self.last_packet = packet_data
-        checksum = sum(packet_data.encode("ascii")) % 256
-        message = f"${packet_data}#{checksum:02x}"
+
+        check = calc_checksum(packet_data.encode("ascii"))
+        if not raw:
+            message = f"${packet_data}#{check:02x}"
+        else:
+            message = packet_data
+
         print(f"-> {message}")
         self.conn.sendall(message.encode("ascii"))
 
     def handle_packet(self, data: bytes) -> None:
-        ascii_data = data.decode("ascii")
-        if ascii_data.count("$") > 0:
-            for _ in range(ascii_data.count("$")):
-                checksum = ascii_data.split("#")[1][:2]
-                packet_data = ascii_data.split("$")[1].split("#")[0]
-                if int(checksum, 16) != sum(packet_data.encode("ascii")) % 256:
-                    print("Invalid Checksum!")
-                    self.conn.sendall(b"-")
-                    print("-> -")
-                else:
-                    self.conn.sendall(b"+")
-                    print("-> +")
-                    self.handle_command(packet_data)
-        elif data == b"\x03":
+        if data == b"\x03":
+            print("Received Break!")
             self.dbg.stop()
-            self.conn.sendall(b"+")
-            print("-> +")
+            self.last_signal = Signal.SIGINT
+            self.send(f"S{self.last_signal:02x}")
+            return
+
+        data = data.decode("ascii")
+        for packet_data, checksum in re.findall(r"\$([^#]*)#([0-9a-f]{2})", data):
+            if int(checksum, 16) != calc_checksum(packet_data):
+                logger.error(f"Received invalid packet: '{data}'")
+                if self.send_ack:
+                    self.send(GDBStub.NACK, raw=True)
+            else:
+                if self.send_ack:
+                    self.send(GDBStub.ACK, raw=True)
+                self.handle_command(packet_data)
 
     def handle_command(self, command: str) -> None:
         command_handlers: Dict[str, Callable[[str], None]] = {
             "?": self.handle_halt_query,
             "!": self.handle_extended_enable,
             "q": self.handle_query,
+            "Q": self.handle_query_set,
             "s": self.handle_step,
             "c": self.handle_continue,
             "Z": self.handle_add_break,
@@ -147,25 +190,37 @@ class GDBStub:
             self.send("")
 
     def handle_halt_query(self, _command: str) -> None:
-        self.send(self.last_signal)
+        self.send(f"S{self.last_signal}")
 
     def handle_extended_enable(self, _command: str) -> None:
         self.send("OK")
 
     def handle_query(self, command: str) -> None:
-        if len(command) == 0:
+        # https://sourceware.org/gdb/onlinedocs/gdb/General-Query-Packets.html
+        if command[0] in ["C", "P", "L"]:
+            # qC, qP, qL packets are older format
             self.send("")
-        elif command == "Attached":
+            return
+
+        name, _, rest = command.partition(":")
+
+        if name == "Supported":
+            self.send("PacketSize=10000000000;QStartNoAckMode+")
+        elif name == "Attached":
+            # qAttached: "0" -- 'The remote server created a new process.'
             self.send("0")
-        elif "Supported" in command:
-            # Since we are using a tcp connection we do not want to split up messages into different packets, so packetsize is set absurdly large
-            self.send("PacketSize=10000000000")
-        elif "Symbol::" in command:
-            self.send("OK")
-        elif "C" == command[0]:
-            self.send("")
-        elif "Offsets" in command:
+        elif name == "Offsets":
             self.send("Text=000;Data=000;Bss=000")
+        elif name == "Symbol":
+            self.send("OK")
+        else:
+            self.send("")
+
+    def handle_query_set(self, command: str) -> None:
+        name, _, rest = command.partition(":")
+        if name == "StartNoAckMode":
+            self.send_ack = False
+            self.send("OK")
         else:
             self.send("")
 
@@ -176,8 +231,8 @@ class GDBStub:
             addr = int(command, 16)
             print(f"{command=} {addr=:02x}")
         self.dbg.step()
-        self.send(SIGTRAP)
-        self.last_signal = SIGTRAP
+        self.last_signal = Signal.SIGTRAP
+        self.send(f"S{self.last_signal:02x}")
 
     def handle_continue(self, command: str) -> None:
         if len(command):
@@ -280,24 +335,23 @@ class GDBStub:
         self.dbg.reset()
 
     def handle_read_one_reg(self, command: str) -> None:
-        if len(command):
-            reg_num = int(command, 16)
-            if reg_num == 34:
-                # GDB has register 34 as the program counter
-                pc = self.dbg.readProgramCounter()
-                print(pc)
-                print(hex(pc))
-                pc = pc << 1
-                print(hex(pc))
-                pcString = format(pc, '08x')
-                print(pcString)
-                pcByteAr = bytearray.fromhex(pcString.upper())
-                pcByteAr.reverse()
-                pcByteString = ''.join(format(x, '02x') for x in pcByteAr)
-                print(pcByteString)
-                self.send(pcByteString)
-                return
-        self.send("")
+        reg_num = int(command, 16)
+        if reg_num < 32:
+            # General Regs: R0-R31
+            reg = self.dbg.readRegs()[reg_num]
+            self.send(f"{reg:02x}")
+        elif reg_num == 34:
+            # GDB register 34 = PC
+            pc = self.dbg.readProgramCounter()
+            print(pc)
+            pc <<= 1
+            # print(pc)
+            pc_bytes = struct.pack("<I", (pc & 0xFFFFFFFF))
+            pc_str = "".join([format(x, "02x") for x in pc_bytes])
+            print(pc_str)
+            self.send(pc_str)
+        else:
+            self.send("")
 
     def handle_write_one_reg(self, command: str) -> None:
         pass

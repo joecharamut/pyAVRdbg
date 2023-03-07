@@ -162,21 +162,21 @@ class Debugger:
 
     # SoftwareBreakpoints EDBG expects these addresses in bytes
     # Multiple SW breakpoints can be defined by shifting 4 bytes to the left
-    def breakpointSWSet(self, address) -> None:
+    def set_sw_breakpoint(self, address) -> None:
         self.device.avr.protocol.software_breakpoint_set(address)
     
-    def breakpointSWClear(self, address) -> None:
+    def clear_sw_breakpoint(self, address: int) -> None:
         self.device.avr.protocol.software_breakpoint_clear(address)
 
-    def breakpointSWClearAll(self) -> None:
+    def clear_all_sw_breakpoint(self) -> None:
         self.device.avr.protocol.software_breakpoint_clear_all()
     
     # HardwareBreakpoints EDBG expects these addresses in words
-    def breakpointHWSet(self, address) -> None:
-        wordAddress = int(address/2)
-        self.device.avr.breakpoint_set(wordAddress)
+    def set_hw_breakpoint(self, address: int) -> None:
+        word_address = address >> 1
+        self.device.avr.breakpoint_set(word_address)
 
-    def breakpointHWClear(self) -> None:
+    def clear_hw_breakpoint(self) -> None:
         self.device.avr.breakpoint_clear()
     
     # Cleanup code for detaching target

@@ -60,8 +60,8 @@ class GDBStub:
 
     def listen_for_connection(self) -> None:
         self.dbg.stop()
-        self.dbg.breakpointSWClearAll()
-        self.dbg.breakpointHWClear()
+        self.dbg.clear_all_sw_breakpoint()
+        self.dbg.clear_hw_breakpoint()
 
         while self.dbg.pollEvent():
             # consume pending events
@@ -226,11 +226,11 @@ class GDBStub:
         addr = int(addr, 16)
         if bp_type == "0":
             # SW breakpoint
-            self.dbg.breakpointSWSet(addr)
+            self.dbg.set_sw_breakpoint(addr)
             self.send("OK")
         elif bp_type == "1":
             # HW breakpoint
-            self.dbg.breakpointHWSet(addr)
+            self.dbg.set_hw_breakpoint(addr)
             self.send("OK")
         else:
             # Not Supported
@@ -242,11 +242,11 @@ class GDBStub:
         addr = int(addr, 16)
         if bp_type == "0":
             # SW breakpoint
-            self.dbg.breakpointSWClear(addr)
+            self.dbg.clear_sw_breakpoint(addr)
             self.send("OK")
         elif bp_type == "1":
             # HW breakpoint
-            self.dbg.breakpointHWClear()
+            self.dbg.clear_hw_breakpoint()
             self.send("OK")
         else:
             # Not Supported

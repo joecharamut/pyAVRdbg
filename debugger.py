@@ -24,8 +24,7 @@ import asyncio
 logger = logging.getLogger(__name__)
 
 
-class Debugger():
-
+class Debugger:
     def __init__(self, DeviceName):
         # Make a connection
         self.transport = hid_transport()
@@ -117,23 +116,23 @@ class Debugger():
     # General debugging
 
     def attach(self, do_break=False):
-            self.device.avr.protocol.attach(do_break)
+        self.device.avr.protocol.attach(do_break)
 
     def detach(self):
-            self.device.avr.protocol.detach()
+        self.device.avr.protocol.detach()
 
-    # Flow controll
+    # Flow control
     def reset(self):
-            self.device.avr.protocol.reset()
+        self.device.avr.protocol.reset()
     
     def step(self):
-            self.device.avr.protocol.step() 
+        self.device.avr.protocol.step()
     
     def stop(self):
-            self.device.avr.protocol.stop()
+        self.device.avr.protocol.stop()
 
     def run(self):
-            self.device.avr.protocol.run()
+        self.device.avr.protocol.run()
 
     def runTo(self, address):
         wordAddress = int(address/2)
@@ -176,13 +175,13 @@ class Debugger():
     # SoftwareBreakpoints EDBG expects these addresses in bytes
     # Multiple SW breakpoints can be defined by shifting 4 bytes to the left
     def breakpointSWSet(self, address):
-            self.device.avr.protocol.software_breakpoint_set(address)
+        self.device.avr.protocol.software_breakpoint_set(address)
     
     def breakpointSWClear(self, address):
-            self.device.avr.protocol.software_breakpoint_clear(address)
+        self.device.avr.protocol.software_breakpoint_clear(address)
 
     def breakpointSWClearAll(self):
-            self.device.avr.protocol.software_breakpoint_clear_all()
+        self.device.avr.protocol.software_breakpoint_clear_all()
     
     # HardwareBreakpoints EDBG expects these addresses in words
     def breakpointHWSet(self, address):
@@ -190,9 +189,9 @@ class Debugger():
         self.device.avr.breakpoint_set(wordAddress)
 
     def breakpointHWClear(self):
-            self.device.avr.breakpoint_clear()
+        self.device.avr.breakpoint_clear()
     
-    # Cleanup code for detatching target
+    # Cleanup code for detaching target
     def cleanup(self):
         # and end debug
         self.device.avr.protocol.stop()

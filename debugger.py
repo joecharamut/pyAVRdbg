@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 class Debugger:
-    def __init__(self, DeviceName):
+    def __init__(self, DeviceName) -> None:
         # Make a connection
         self.transport = hid_transport()
         self.transport.disconnect()
@@ -30,7 +30,7 @@ class Debugger:
         self.device.avr.protocol.attach()
         #threading.Thread(target=pollingThread, args=(self.eventReciver,)).start()
     
-    def pollEvent(self):
+    def pollEvent(self) -> Optional[bytearray]:
         #eventRegister = self.eventReciver.poll_events()
         eventRegister = self.device.avr.protocol.poll_events()
         # logging.info(eventRegister)
@@ -103,30 +103,30 @@ class Debugger:
 
     # General debugging
 
-    def attach(self, do_break=False):
+    def attach(self, do_break=False) -> None:
         self.device.avr.protocol.attach(do_break)
 
-    def detach(self):
+    def detach(self) -> None:
         self.device.avr.protocol.detach()
 
     # Flow control
-    def reset(self):
+    def reset(self) -> None:
         self.device.avr.protocol.reset()
     
-    def step(self):
+    def step(self) -> None:
         self.device.avr.protocol.step()
     
-    def stop(self):
+    def stop(self) -> None:
         self.device.avr.protocol.stop()
 
-    def run(self):
+    def run(self) -> None:
         self.device.avr.protocol.run()
 
-    def runTo(self, address):
+    def runTo(self, address) -> None:
         wordAddress = int(address/2)
         self.device.avr.protocol.run_to(wordAddress)
 
-    def readRunningState(self):
+    def readRunningState(self) -> bool:
         # Debug interface to see what state the avr is in.
         AVR8_CTXT_TEST = 0x80
         AVR8_TEST_TGT_RUNNING = 0x00
@@ -162,25 +162,25 @@ class Debugger:
 
     # SoftwareBreakpoints EDBG expects these addresses in bytes
     # Multiple SW breakpoints can be defined by shifting 4 bytes to the left
-    def breakpointSWSet(self, address):
+    def breakpointSWSet(self, address) -> None:
         self.device.avr.protocol.software_breakpoint_set(address)
     
-    def breakpointSWClear(self, address):
+    def breakpointSWClear(self, address) -> None:
         self.device.avr.protocol.software_breakpoint_clear(address)
 
-    def breakpointSWClearAll(self):
+    def breakpointSWClearAll(self) -> None:
         self.device.avr.protocol.software_breakpoint_clear_all()
     
     # HardwareBreakpoints EDBG expects these addresses in words
-    def breakpointHWSet(self, address):
+    def breakpointHWSet(self, address) -> None:
         wordAddress = int(address/2)
         self.device.avr.breakpoint_set(wordAddress)
 
-    def breakpointHWClear(self):
+    def breakpointHWClear(self) -> None:
         self.device.avr.breakpoint_clear()
     
     # Cleanup code for detaching target
-    def cleanup(self):
+    def cleanup(self) -> None:
         # and end debug
         self.device.avr.protocol.stop()
         self.device.avr.protocol.software_breakpoint_clear_all()
@@ -193,6 +193,6 @@ class Debugger:
         self.housekeeper.end_session()
         self.transport.disconnect()
     
-    def __exit__(self, exc_type, exc_value, traceback):
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
         self.cleanup()
 

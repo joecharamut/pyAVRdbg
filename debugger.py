@@ -78,21 +78,8 @@ class Debugger():
                 return None
 
     # Memory interaction
-    def writeSRAM(self, address, data):
-        offset = (self.memoryinfo.memory_info_by_name('internal_sram'))['address']
-        return self.device.write(self.memoryinfo.memory_info_by_name('internal_sram'), address-offset, data)
 
-    def readSRAM(self, address, numBytes):
-        offset = (self.memoryinfo.memory_info_by_name('internal_sram'))['address']
-        return self.device.read(self.memoryinfo.memory_info_by_name('internal_sram'), address-offset, numBytes)
-
-    def readFlash(self, address, numBytes):
-        logging.info("Reading "+str(numBytes)+" bytes from flash at " + str(address))
-        offset = (self.memoryinfo.memory_info_by_name('flash'))['address']
-        # See programmer.py:265 in pymcuprog, maybe flashread fails due to page alignement?
-        return self.device.read(self.memoryinfo.memory_info_by_name('flash'), address, numBytes)
-
-    def read_addr(self, address: int, count: int) -> Optional[bytes]:
+    def read_mem(self, address: int, count: int) -> Optional[bytes]:
         logger.info(f"Reading {count} bytes from address 0x{address:04x}")
         mem_type = self.memoryinfo.memory_info_by_address(address)
         if not mem_type:
@@ -102,51 +89,30 @@ class Debugger():
         base = mem_type["address"]
         read_size = mem_type["read_size"]
         logger.debug(f"Address 0x{address:04x} is {name} [base: 0x{base:04x}, read_size: {read_size}]")
-        offset = address - base
 
+        offset = address - base
         align = offset % read_size
         data = self.device.read(mem_type, offset - align, count + align)
         return data[align:]
 
-    def writeEEPROM(self, address, data):
-        offset = (self.memoryinfo.memory_info_by_name('eeprom'))['address']
-        return self.device.write(self.memoryinfo.memory_info_by_name('eeprom'), address-offset, data)
+    def write_mem(self, address: int, data: bytes) -> bool:
+        logger.info(f"Writing {len(data)} bytes to address 0x{address:04x}")
+        mem_type = self.memoryinfo.memory_info_by_address(address)
+        if not mem_type:
+            return False
 
-    def readEEPROM(self, address, numBytes):
-        offset = (self.memoryinfo.memory_info_by_name('eeprom'))['address']
-        return self.device.read(self.memoryinfo.memory_info_by_name('eeprom'), address-offset, numBytes)
+        name = mem_type["name"]
+        base = mem_type["address"]
+        print(mem_type)
+        logger.debug(f"Address 0x{address:04x} is {name} [base: 0x{base:04x}]")
 
-    def writeFuse(self, address, data):
-        offset = (self.memoryinfo.memory_info_by_name('fuses'))['address']
-        return self.device.write(self.memoryinfo.memory_info_by_name('fuses'), address-offset, data)
+        if name == "flash":
+            # prevent flash writes
+            return False
 
-    def readFuse(self, address, numBytes):
-        offset = (self.memoryinfo.memory_info_by_name('fuses'))['address']
-        return self.device.read(self.memoryinfo.memory_info_by_name('fuses'), address-offset, numBytes)
-
-    def writeLock(self, address, data):
-        offset = (self.memoryinfo.memory_info_by_name('lockbits'))['address']
-        return self.device.write(self.memoryinfo.memory_info_by_name('lockbits'), address-offset, data)
-
-    def readLock(self, address, numBytes):
-        offset = (self.memoryinfo.memory_info_by_name('lockbits'))['address']
-        return self.device.read(self.memoryinfo.memory_info_by_name('lockbits'), address-offset, numBytes)
-
-    def writeSignature(self, address, data):
-        offset = (self.memoryinfo.memory_info_by_name('signatures'))['address']
-        return self.device.write(self.memoryinfo.memory_info_by_name('signatures'), address-offset, data)
-
-    def readSignature(self, address, numBytes):
-        offset = (self.memoryinfo.memory_info_by_name('signatures'))['address']
-        return self.device.read(self.memoryinfo.memory_info_by_name('signatures'), address-offset, numBytes)
-
-    def writeUserSignature(self, address, data):
-        offset = (self.memoryinfo.memory_info_by_name('user_row'))['address']
-        return self.device.write(self.memoryinfo.memory_info_by_name('user_row'), address-offset, data)
-
-    def readUserSignature(self, address, numBytes):
-        offset = (self.memoryinfo.memory_info_by_name('user_row'))['address']
-        return self.device.read(self.memoryinfo.memory_info_by_name('user_row'), address-offset, numBytes)
+        offset = address - base
+        self.device.write(mem_type, offset, data)
+        return True
 
     # General debugging
 

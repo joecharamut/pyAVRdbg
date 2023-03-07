@@ -256,7 +256,7 @@ class GDBStub:
         addr, size = command.split(",")
         addr = int(addr, 16)
         size = int(size, 16)
-        data = self.dbg.read_addr(addr, size)
+        data = self.dbg.read_mem(addr, size)
 
         if data:
             self.send("".join([format(b, "02x") for b in data]))
@@ -265,7 +265,19 @@ class GDBStub:
             self.send("E00")
 
     def handle_write_mem(self, command: str) -> None:
-        pass
+        # Maddr,length:XX...
+        addr, _, command = command.partition(",")
+        size, _, command = command.partition(":")
+        addr = int(addr, 16)
+        size = int(size, 16)
+        data = bytearray.fromhex(command)
+
+        if self.dbg.write_mem(addr, data):
+            self.send("OK")
+        else:
+            # todo: report error correctly
+            self.send("E00")
+
 
     def handle_read_regs(self, _command: str) -> None:
         regs = self.dbg.readRegs()

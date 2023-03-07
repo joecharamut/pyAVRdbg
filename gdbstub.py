@@ -5,7 +5,7 @@ import struct
 from socket import socket, AF_INET, SOCK_STREAM
 from select import select
 from types import FrameType
-from typing import Dict, Callable, Optional, Tuple, List
+from typing import Dict, Callable, Optional
 import enum
 
 from pyedbglib.protocols import avr8protocol
@@ -271,6 +271,10 @@ class GDBStub:
         addr = int(addr, 16)
         size = int(size, 16)
         data = bytearray.fromhex(command)
+
+        if len(data) != size:
+            self.send("E00")
+            return
 
         if self.dbg.write_mem(addr, data):
             self.send("OK")

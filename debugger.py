@@ -13,56 +13,47 @@ logger = logging.getLogger(__name__)
 
 
 class Debugger:
-    def __init__(self, DeviceName) -> None:
+    def __init__(self, device_name) -> None:
         # Make a connection
         self.transport = hid_transport()
         self.transport.disconnect()
         # Connect
         self.transport.connect()
-        self.deviceInf = deviceinfo.getdeviceinfo(DeviceName)
-        self.memoryinfo = deviceinfo.DeviceMemoryInfo(self.deviceInf)
+        self.device_info = deviceinfo.getdeviceinfo(device_name)
+        self.memoryinfo = deviceinfo.DeviceMemoryInfo(self.device_info)
         self.housekeeper = housekeepingprotocol.Jtagice3HousekeepingProtocol(self.transport)
         self.housekeeper.start_session()
-        self.device = NvmAccessProviderCmsisDapUpdi(self.transport, self.deviceInf)
-        #self.device.avr.deactivate_physical()
+        self.device = NvmAccessProviderCmsisDapUpdi(self.transport, self.device_info)
+        # self.device.avr.deactivate_physical()
         self.device.avr.activate_physical()
         # Start debug by attaching (live)
         self.device.avr.protocol.attach()
-        #threading.Thread(target=pollingThread, args=(self.eventReciver,)).start()
-    
+
     def pollEvent(self) -> Optional[bytearray]:
-        #eventRegister = self.eventReciver.poll_events()
-        eventRegister = self.device.avr.protocol.poll_events()
-        # logging.info(eventRegister)
-        if eventRegister and eventRegister[0] == AvrCommand.AVR_EVENT: # Verifying data is an event
-            size = int.from_bytes(eventRegister[1:3], byteorder='big')
-            if size != 0:
-                #event recived
-                logging.info("Event recived")
-                eventarray = eventRegister[3:(size+1+3)]
-                SOF = eventarray[0]
-                protocol_version = eventarray[1:2]
-                sequence_id = eventarray[2:4]
-                protocol_handler_id = eventarray[4:5]
-                payload = eventarray[5:]
-                #logging.info(eventarray)
-                if payload[0] == avr8protocol.Avr8Protocol.EVT_AVR8_BREAK:
-                    event_id = payload[0]
-                    #event_version = payload[1]
-                    pc = payload[1:5]
+        event = self.device.avr.protocol.poll_events()
+        # Verifying data is an event
+        if event and event[0] == AvrCommand.AVR_EVENT:
+            size = int.from_bytes(event[1:3], byteorder="big")
+            if size > 0:
+                # event received
+                event_array = event[3:(size+1+3)]
+                SOF = event_array[0]
+                protocol_version = event_array[1:2]
+                sequence_id = event_array[2:4]
+                protocol_handler_id = event_array[4:5]
+                payload = event_array[5:]
+
+                event_id = payload[0]
+                logging.debug(f"Received event: {event_id}")
+                if event_id == avr8protocol.Avr8Protocol.EVT_AVR8_BREAK:
+                    pc = int.from_bytes(payload[1:5], byteorder="little")
                     break_cause = payload[5]
                     extended_info = payload[6:]
-                    print("PC: ", end="")
-                    print(int.from_bytes(pc, byteorder='little'))
-                    logging.info("Recived break event")
-                    return (avr8protocol.Avr8Protocol.EVT_AVR8_BREAK, int.from_bytes(pc, byteorder='little'), break_cause)
+                    logging.info(f"Received break event (PC=0x{pc:04x}, {break_cause=}, {extended_info=})")
+                    return (avr8protocol.Avr8Protocol.EVT_AVR8_BREAK, pc, break_cause)
                 else:
-                    logging.info("Unknown event: " + payload[0])
-                    return None
-                
-            else:
-                logging.info("No event")
-                return None
+                    logging.warning("Unknown event: " + event_id)
+        return None
 
     # Memory interaction
 
@@ -122,16 +113,17 @@ class Debugger:
     def run(self) -> None:
         self.device.avr.protocol.run()
 
-    def runTo(self, address) -> None:
-        wordAddress = int(address/2)
-        self.device.avr.protocol.run_to(wordAddress)
+    def run_to(self, address: int) -> None:
+        word_address = address >> 1
+        self.device.avr.protocol.run_to(word_address)
 
-    def readRunningState(self) -> bool:
+    def read_running_state(self) -> bool:
         # Debug interface to see what state the avr is in.
-        AVR8_CTXT_TEST = 0x80
-        AVR8_TEST_TGT_RUNNING = 0x00
-        running = bool(self.device.avr.protocol.get_byte(AVR8_CTXT_TEST, AVR8_TEST_TGT_RUNNING))
-        logging.info("AVR running state " + str(running))
+        running = bool(self.device.avr.protocol.get_byte(
+            avr8protocol.Avr8Protocol.AVR8_CTXT_TEST,
+            avr8protocol.Avr8Protocol.AVR8_TEST_TGT_RUNNING
+        ))
+        logging.info(f"Running state is {str(running)}")
         return running
 
     # Registers
@@ -187,7 +179,7 @@ class Debugger:
         self.device.avr.breakpoint_clear()
         self.device.avr.protocol.detach()
         # Stop session
-        #avr.stop()
+        # avr.stop()
         self.device.avr.deactivate_physical()
         # Unwind the stack
         self.housekeeper.end_session()
@@ -195,4 +187,3 @@ class Debugger:
     
     def __exit__(self, exc_type, exc_value, traceback) -> None:
         self.cleanup()
-

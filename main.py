@@ -27,7 +27,7 @@ def setup_logging(verbose_level: int) -> None:
     elif verbose_level >= 2:
         log_out.setLevel(logging.DEBUG)
 
-    logging.basicConfig(handlers=[log_out, log_err])
+    logging.basicConfig(level=logging.DEBUG, handlers=[log_out, log_err])
 
 
 if __name__ == "__main__":
@@ -39,6 +39,7 @@ if __name__ == "__main__":
     parser.add_argument("-v", "--verbose", action="count", help="Additional debug logging")
 
     args = parser.parse_args()
+    print(args)
     setup_logging(args.verbose)
 
     if args.part == "help" or args.part == "":

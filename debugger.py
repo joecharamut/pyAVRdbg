@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Any
 
 from pyedbglib.hidtransport.hidtransportfactory import hid_transport
 from pyedbglib.protocols import housekeepingprotocol
@@ -139,12 +139,6 @@ class Debugger():
         wordAddress = int(address/2)
         self.device.avr.protocol.run_to(wordAddress)
 
-    def readStackPointer(self):
-        return self.device.avr.stack_pointer_read()
-
-    def readSREG(self):
-        return self.device.avr.protocol.memory_read(avr8protocol.Avr8Protocol.AVR8_MEMTYPE_OCD, 0x1C, 0x01)
-
     def readRunningState(self):
         # Debug interface to see what state the avr is in.
         AVR8_CTXT_TEST = 0x80
@@ -153,20 +147,31 @@ class Debugger():
         logging.info("AVR running state " + str(running))
         return running
 
+    # Registers
 
-    # Register and programcounter
-    def readRegs(self):
+    def read_regfile(self) -> bytearray:
         return self.device.avr.protocol.regfile_read()
 
-    def writeRegs(self, regs):
-        return self.device.avr.protocol.regile_write(regs)
+    def write_regfile(self, regs: bytearray) -> Any:
+        return self.device.avr.protocol.regfile_write(regs)
 
-    def readProgramCounter(self):
+    def read_pc(self) -> int:
         # Returned as a word not a byte
         return self.device.avr.protocol.program_counter_read()
 
-    def writeProgramCounter(self, programCounter):
-            self.device.avr.protocol.program_counter_write(programCounter)
+    def write_pc(self, new_pc) -> None:
+        self.device.avr.protocol.program_counter_write(new_pc)
+
+    def read_sreg(self) -> bytearray:
+        # SREG is 1 byte of IO memory, not a real register
+        return self.device.avr.protocol.memory_read(
+            avr8protocol.Avr8Protocol.AVR8_MEMTYPE_OCD,
+            avr8protocol.Avr8Protocol.AVR8_MEMTYPE_OCD_SREG,
+            1
+        )
+
+    def read_sp(self) -> bytearray:
+        return self.device.avr.stack_pointer_read()
 
     # SoftwareBreakpoints EDBG expects these addresses in bytes
     # Multiple SW breakpoints can be defined by shifting 4 bytes to the left

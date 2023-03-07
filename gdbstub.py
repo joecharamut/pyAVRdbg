@@ -278,26 +278,23 @@ class GDBStub:
             # todo: report error correctly
             self.send("E00")
 
-
     def handle_read_regs(self, _command: str) -> None:
-        regs = self.dbg.readRegs()
-        sreg = self.dbg.readSREG()
-        sp = self.dbg.readStackPointer()
-
         reg_string = ""
-        for r in regs:
+        for r in self.dbg.read_regfile():
             reg_string += f"{r:02x}"
-        for r in sreg:
+        for r in self.dbg.read_sreg():
             reg_string += f"{r:02x}"
-        for r in sp:
+        for r in self.dbg.read_sp():
             reg_string += f"{r:02x}"
         self.send(reg_string)
 
     def handle_write_regs(self, command: str) -> None:
-        # todo: implement
-        new_register_data = command
-        print(new_register_data)
-        self.send("")
+        new_regs = bytearray.fromhex(command)
+        try:
+            self.dbg.write_regfile(new_regs[0:31])
+            self.send("OK")
+        except:
+            self.send("E00")
 
     def handle_kill(self, _command: str) -> None:
         self.dbg.reset()
@@ -306,11 +303,11 @@ class GDBStub:
         reg_num = int(command, 16)
         if reg_num < 32:
             # General Regs: R0-R31
-            reg = self.dbg.readRegs()[reg_num]
+            reg = self.dbg.read_regfile()[reg_num]
             self.send(f"{reg:02x}")
         elif reg_num == 34:
             # GDB register 34 = PC
-            pc = self.dbg.readProgramCounter()
+            pc = self.dbg.read_pc()
             print(pc)
             pc <<= 1
             # print(pc)
@@ -319,10 +316,21 @@ class GDBStub:
             print(pc_str)
             self.send(pc_str)
         else:
+            logger.error(f"Unhandled register read! {reg_num=}")
             self.send("")
 
     def handle_write_one_reg(self, command: str) -> None:
-        pass
+        reg_num, val = command.split("=")
+        reg_num = int(reg_num, 16)
+        val = int(val, 16)
+
+        regfile = self.dbg.read_regfile()
+        regfile[reg_num] = val
+        try:
+            self.dbg.write_regfile(regfile)
+            self.send("OK")
+        except:
+            self.send("E00")
 
     def handle_restart(self, _command: str) -> None:
         self.dbg.reset()

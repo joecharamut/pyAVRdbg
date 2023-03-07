@@ -1,26 +1,14 @@
 from typing import Optional, Any
 
 from pyedbglib.hidtransport.hidtransportfactory import hid_transport
-from pyedbglib.protocols import housekeepingprotocol
+from pyedbglib.protocols.avrcmsisdap import AvrCommand
 from pyedbglib.protocols import housekeepingprotocol
 from pyedbglib.protocols import avr8protocol
-from pyedbglib.protocols import avr8protocolerrors
 
-# Retrieve device info
 from pymcuprog.deviceinfo import deviceinfo
-
-# Construct an NVM provider
 from pymcuprog.nvmupdi import NvmAccessProviderCmsisDapUpdi
 
-from pyedbglib.protocols.avrcmsisdap import AvrCommand, AvrCommandError
-from pyedbglib.protocols.jtagice3protocol import Jtagice3Command
-
 import logging
-import threading
-import time
-import asyncio
-
-# logging.basicConfig(level=logging.INFO,handlers=[logging.StreamHandler()])
 logger = logging.getLogger(__name__)
 
 

@@ -63,7 +63,7 @@ class GDBStub:
         self.dbg.clear_all_sw_breakpoint()
         self.dbg.clear_hw_breakpoint()
 
-        while self.dbg.pollEvent():
+        while self.dbg.poll_events():
             # consume pending events
             pass
 
@@ -85,7 +85,7 @@ class GDBStub:
                         print(f"<- {data}")
                         self.handle_packet(data)
 
-                while event := self.dbg.pollEvent():
+                while event := self.dbg.poll_events():
                     print(event)
                     event_type, pc, break_cause = event
                     if event_type == avr8protocol.Avr8Protocol.EVT_AVR8_BREAK and break_cause == 1:
@@ -259,7 +259,8 @@ class GDBStub:
         data = self.dbg.read_mem(addr, size)
 
         if data:
-            self.send("".join([format(b, "02x") for b in data]))
+            # self.send("".join([format(b, "02x") for b in data]))
+            self.send(data.hex())
         else:
             # todo: report error correctly
             self.send("E00")
@@ -283,6 +284,9 @@ class GDBStub:
             self.send("E00")
 
     def handle_read_regs(self, _command: str) -> None:
+        reg_string = self.dbg.read_regfile().hex() + self.dbg.read_sreg().hex() + self.dbg.read_sp().hex()
+        self.send(reg_string)
+        return
         reg_string = ""
         for r in self.dbg.read_regfile():
             reg_string += f"{r:02x}"
@@ -316,7 +320,8 @@ class GDBStub:
             pc <<= 1
             # print(pc)
             pc_bytes = struct.pack("<I", (pc & 0xFFFFFFFF))
-            pc_str = "".join([format(x, "02x") for x in pc_bytes])
+            # pc_str = "".join([format(x, "02x") for x in pc_bytes])
+            pc_str = pc_bytes.hex()
             print(pc_str)
             self.send(pc_str)
         else:

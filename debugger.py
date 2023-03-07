@@ -20,7 +20,7 @@ class Debugger:
         # Connect
         self.transport.connect()
         self.device_info = deviceinfo.getdeviceinfo(device_name)
-        self.memoryinfo = deviceinfo.DeviceMemoryInfo(self.device_info)
+        self.memory_info = deviceinfo.DeviceMemoryInfo(self.device_info)
         self.housekeeper = housekeepingprotocol.Jtagice3HousekeepingProtocol(self.transport)
         self.housekeeper.start_session()
         self.device = NvmAccessProviderCmsisDapUpdi(self.transport, self.device_info)
@@ -29,7 +29,7 @@ class Debugger:
         # Start debug by attaching (live)
         self.device.avr.protocol.attach()
 
-    def pollEvent(self) -> Optional[bytearray]:
+    def poll_events(self) -> Optional[bytearray]:
         event = self.device.avr.protocol.poll_events()
         # Verifying data is an event
         if event and event[0] == AvrCommand.AVR_EVENT:
@@ -59,7 +59,7 @@ class Debugger:
 
     def read_mem(self, address: int, count: int) -> Optional[bytes]:
         logger.info(f"Reading {count} bytes from address 0x{address:04x}")
-        mem_type = self.memoryinfo.memory_info_by_address(address)
+        mem_type = self.memory_info.memory_info_by_address(address)
         if not mem_type:
             return None
 
@@ -75,7 +75,7 @@ class Debugger:
 
     def write_mem(self, address: int, data: bytes) -> bool:
         logger.info(f"Writing {len(data)} bytes to address 0x{address:04x}")
-        mem_type = self.memoryinfo.memory_info_by_address(address)
+        mem_type = self.memory_info.memory_info_by_address(address)
         if not mem_type:
             return False
 

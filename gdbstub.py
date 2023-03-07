@@ -17,34 +17,6 @@ from debugger import Debugger
 logger = logging.getLogger(__name__)
 
 
-class MemoryType(enum.Enum):
-    FLASH = enum.auto()
-    SRAM = enum.auto()
-    EEPROM = enum.auto()
-    FUSE = enum.auto()
-    LOCK = enum.auto()
-    SIG = enum.auto()
-    USRSIG = enum.auto()
-
-
-def get_memory_map(part: dict) -> Optional[List[Tuple[int, int, MemoryType]]]:
-    if "architecture" not in part:
-        logger.error("Error reading part memory map")
-        return None
-
-    if part["architecture"] == "avr8x":
-        return [
-            (part["flash_address_byte"], part["flash_size_bytes"], MemoryType.FLASH),
-            (part["eeprom_address_byte"], part["eeprom_size_bytes"], MemoryType.EEPROM),
-            (part["fuses_address_byte"], part["fuses_size_bytes"], MemoryType.FUSE),
-            (part["internal_sram_address_byte"], part["internal_sram_size_bytes"], MemoryType.SRAM),
-            (part["lockbits_address_byte"], part["lockbits_size_bytes"], MemoryType.LOCK),
-            (part["signatures_address_byte"], part["signatures_size_bytes"], MemoryType.SIG),
-            (part["user_row_address_byte"], part["user_row_size_bytes"], MemoryType.USRSIG),
-        ]
-    return None
-
-
 def calc_checksum(data: str | bytes) -> int:
     if isinstance(data, str):
         data = data.encode("ascii")
@@ -190,7 +162,7 @@ class GDBStub:
             self.send("")
 
     def handle_halt_query(self, _command: str) -> None:
-        self.send(f"S{self.last_signal}")
+        self.send(f"S{self.last_signal:02x}")
 
     def handle_extended_enable(self, _command: str) -> None:
         self.send("OK")
@@ -210,7 +182,7 @@ class GDBStub:
             # qAttached: "0" -- 'The remote server created a new process.'
             self.send("0")
         elif name == "Offsets":
-            self.send("Text=000;Data=000;Bss=000")
+            self.send("Text=8000;Data=3E00;Bss=3E00")
         elif name == "Symbol":
             self.send("OK")
         else:
@@ -284,29 +256,13 @@ class GDBStub:
         addr, size = command.split(",")
         addr = int(addr, 16)
         size = int(size, 16)
-        data = None
+        data = self.dbg.read_addr(addr, size)
 
-        for mem_base, mem_size, mem_type in get_memory_map(self.dev):
-            if mem_base <= addr <= (mem_base + mem_size):
-                print(addr, mem_type)
-                if mem_type == MemoryType.FLASH:
-                    data = self.dbg.readFlash(addr, size)
-                elif mem_type == MemoryType.SRAM:
-                    data = self.dbg.readSRAM(addr, size)
-                elif mem_type == MemoryType.EEPROM:
-                    data = self.dbg.readEEPROM(addr, size)
-                elif mem_type == MemoryType.FUSE:
-                    data = self.dbg.readFuse(addr, size)
-                elif mem_type == MemoryType.LOCK:
-                    data = self.dbg.readLock(addr, size)
-                elif mem_type == MemoryType.SIG:
-                    data = self.dbg.readSignature(addr, size)
-                elif mem_type == MemoryType.USRSIG:
-                    data = self.dbg.readUserSignature(addr, size)
-                self.send("".join([format(b, "02x") for b in data]))
-                return
-
-        self.send("")
+        if data:
+            self.send("".join([format(b, "02x") for b in data]))
+        else:
+            # todo: report error correctly
+            self.send("E00")
 
     def handle_write_mem(self, command: str) -> None:
         pass

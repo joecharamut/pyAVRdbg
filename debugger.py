@@ -1,3 +1,5 @@
+from typing import Optional
+
 from pyedbglib.hidtransport.hidtransportfactory import hid_transport
 from pyedbglib.protocols import housekeepingprotocol
 from pyedbglib.protocols import housekeepingprotocol
@@ -18,8 +20,8 @@ import threading
 import time
 import asyncio
 
-logging.basicConfig(level=logging.INFO,handlers=[logging.StreamHandler()])
-
+# logging.basicConfig(level=logging.INFO,handlers=[logging.StreamHandler()])
+logger = logging.getLogger(__name__)
 
 
 class Debugger():
@@ -89,6 +91,22 @@ class Debugger():
         offset = (self.memoryinfo.memory_info_by_name('flash'))['address']
         # See programmer.py:265 in pymcuprog, maybe flashread fails due to page alignement?
         return self.device.read(self.memoryinfo.memory_info_by_name('flash'), address, numBytes)
+
+    def read_addr(self, address: int, count: int) -> Optional[bytes]:
+        logger.info(f"Reading {count} bytes from address 0x{address:04x}")
+        mem_type = self.memoryinfo.memory_info_by_address(address)
+        if not mem_type:
+            return None
+
+        name = mem_type["name"]
+        base = mem_type["address"]
+        read_size = mem_type["read_size"]
+        logger.debug(f"Address 0x{address:04x} is {name} [base: 0x{base:04x}, read_size: {read_size}]")
+        offset = address - base
+
+        align = offset % read_size
+        data = self.device.read(mem_type, offset - align, count + align)
+        return data[align:]
 
     def writeEEPROM(self, address, data):
         offset = (self.memoryinfo.memory_info_by_name('eeprom'))['address']

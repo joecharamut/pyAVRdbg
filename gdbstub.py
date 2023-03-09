@@ -36,6 +36,7 @@ class Signal(enum.IntEnum):
 class GDBStub:
     ACK = "+"
     NACK = "-"
+    PACKET_SIZE = 4096
 
     def __init__(self, device_name: str, host: str, port: int) -> None:
         self.dev = deviceinfo.getdeviceinfo(device_name)
@@ -52,10 +53,12 @@ class GDBStub:
 
         self.last_packet = None
         self.last_signal = Signal.NONE
+
         self.send_ack = True
+        self.extended_mode = False
 
     def signal_handler(self, _sig: int, _frame: Optional[FrameType]) -> None:
-        print("You pressed Ctrl+C!")
+        logger.info("Received Ctrl+C, quitting")
         self.quit()
 
     def listen_for_connection(self) -> None:
@@ -67,7 +70,7 @@ class GDBStub:
             # consume pending events
             pass
 
-        logger.info(f"Waiting for GDB session on {self.address[0]}:{self.address[1]}")
+        logger.info("Waiting for GDB session on %s:%s", self.address[0], self.address[1])
         signal.signal(signal.SIGINT, self.signal_handler)
 
         self.sock.bind(self.address)
@@ -76,27 +79,27 @@ class GDBStub:
         self.conn, addr = self.sock.accept()
         self.conn.setblocking(False)
 
-        print(f"GDB Connected: {addr}")
+        logger.info("GDB Connected: %s", addr)
         try:
             while True:
                 readable, _, _ = select([self.conn], [], [], 0.5)
                 for c in readable:
-                    if data := c.recv(4096):
-                        print(f"<- {data}")
+                    if data := c.recv(GDBStub.PACKET_SIZE):
+                        logger.debug("<- %s", data)
                         self.handle_packet(data)
 
                 while event := self.dbg.poll_events():
                     print(event)
                     event_type, pc, break_cause = event
                     if event_type == avr8protocol.Avr8Protocol.EVT_AVR8_BREAK and break_cause == 1:
-                        self.last_signal = Signal.SIGTRAP
-                        self.send(f"S{self.last_signal:02x}")
+                        self.send_halt_reply(Signal.SIGTRAP)
         except Exception as exc:
             self.quit(exc)
 
     def quit(self, exc: Optional[Exception] = None) -> None:
         self.dbg.cleanup()
-        self.conn.close()
+        if self.conn:
+            self.conn.close()
         self.sock.close()
         if exc:
             raise exc
@@ -105,21 +108,19 @@ class GDBStub:
     def send(self, packet_data: str, raw: bool = False) -> None:
         self.last_packet = packet_data
 
-        check = calc_checksum(packet_data.encode("ascii"))
+        check = calc_checksum(packet_data)
         if not raw:
             message = f"${packet_data}#{check:02x}"
         else:
             message = packet_data
 
-        print(f"-> {message}")
+        logger.debug("-> %s", message)
         self.conn.sendall(message.encode("ascii"))
 
     def handle_packet(self, data: bytes) -> None:
         if data == b"\x03":
-            print("Received Break!")
-            self.dbg.stop()
-            self.last_signal = Signal.SIGINT
-            self.send(f"S{self.last_signal:02x}")
+            logger.info("Interrupt request received")
+            self.interrupt_target()
             return
 
         data = data.decode("ascii")
@@ -132,6 +133,10 @@ class GDBStub:
                 if self.send_ack:
                     self.send(GDBStub.ACK, raw=True)
                 self.handle_command(packet_data)
+
+    def interrupt_target(self, reason: Optional[Signal] = Signal.SIGINT) -> None:
+        self.dbg.stop()
+        self.send_halt_reply(reason)
 
     def handle_command(self, command: str) -> None:
         command_handlers: Dict[str, Callable[[str], None]] = {
@@ -150,7 +155,10 @@ class GDBStub:
             "k": self.handle_kill,
             "p": self.handle_read_one_reg,
             "P": self.handle_write_one_reg,
+            "r": self.handle_reset,
             "R": self.handle_restart,
+            "v": self.handle_v_command,
+            "D": self.handle_detach,
         }
 
         key = command[0]
@@ -161,27 +169,36 @@ class GDBStub:
             # unknown command reply
             self.send("")
 
-    def handle_halt_query(self, _command: str) -> None:
+    def send_halt_reply(self, sig: Optional[Signal] = None) -> None:
+        if sig:
+            self.last_signal = sig
         self.send(f"S{self.last_signal:02x}")
 
+    def handle_halt_query(self, _command: str) -> None:
+        self.send_halt_reply()
+
     def handle_extended_enable(self, _command: str) -> None:
+        self.extended_mode = True
         self.send("OK")
 
     def handle_query(self, command: str) -> None:
         # https://sourceware.org/gdb/onlinedocs/gdb/General-Query-Packets.html
         if command[0] in ["C", "P", "L"]:
-            # qC, qP, qL packets are older format
+            # qC, qP, qL packets are other format and used for threading so not needed
             self.send("")
             return
 
         name, _, rest = command.partition(":")
 
         if name == "Supported":
-            self.send("PacketSize=10000000000;QStartNoAckMode+")
+            features = rest.split(";")
+            logger.debug("GDB reports supporting %s", features)
+            self.send(f"PacketSize={GDBStub.PACKET_SIZE};QStartNoAckMode+")
         elif name == "Attached":
             # qAttached: "0" -- 'The remote server created a new process.'
             self.send("0")
         elif name == "Offsets":
+            # todo: report offsets from device_info?
             self.send("Text=8000;Data=3E00;Bss=3E00")
         elif name == "Symbol":
             self.send("OK")
@@ -201,15 +218,14 @@ class GDBStub:
         # "addr is address to resume. If addr is omitted, resume at same address."
         if len(command):
             addr = int(command, 16)
-            print(f"{command=} {addr=:02x}")
+            logger.debug("s cmd=%s addr=0x%04x", command, addr)
         self.dbg.step()
-        self.last_signal = Signal.SIGTRAP
-        self.send(f"S{self.last_signal:02x}")
+        self.send_halt_reply(Signal.SIGTRAP)
 
     def handle_continue(self, command: str) -> None:
         if len(command):
             addr = int(command, 16)
-            print(f"{command=} {addr=:02x}")
+            logger.debug("c cmd=%s addr=0x%04x", command, addr)
         self.dbg.run()
         # polledEvent = dbg.pollEvent()
         # Check if its still running, report back SIGTRAP when break.
@@ -221,8 +237,7 @@ class GDBStub:
         # sendPacket(socket, SIGTRAP)
 
     def handle_add_break(self, command: str) -> None:
-        bp_type = command[0]
-        _, addr, length = command.split(",")
+        bp_type, addr, kind = command.split(",")
         addr = int(addr, 16)
         if bp_type == "0":
             # SW breakpoint
@@ -237,8 +252,7 @@ class GDBStub:
             self.send("")
 
     def handle_remove_break(self, command: str) -> None:
-        bp_type = command[0]
-        _, addr, length = command.split(",")
+        bp_type, addr, kind = command.split(",")
         addr = int(addr, 16)
         if bp_type == "0":
             # SW breakpoint
@@ -259,14 +273,13 @@ class GDBStub:
         data = self.dbg.read_mem(addr, size)
 
         if data:
-            # self.send("".join([format(b, "02x") for b in data]))
             self.send(data.hex())
         else:
             # todo: report error correctly
             self.send("E00")
 
     def handle_write_mem(self, command: str) -> None:
-        # Maddr,length:XX...
+        # M addr,length:XX...
         addr, _, command = command.partition(",")
         size, _, command = command.partition(":")
         addr = int(addr, 16)
@@ -286,23 +299,15 @@ class GDBStub:
     def handle_read_regs(self, _command: str) -> None:
         reg_string = self.dbg.read_regfile().hex() + self.dbg.read_sreg().hex() + self.dbg.read_sp().hex()
         self.send(reg_string)
-        return
-        reg_string = ""
-        for r in self.dbg.read_regfile():
-            reg_string += f"{r:02x}"
-        for r in self.dbg.read_sreg():
-            reg_string += f"{r:02x}"
-        for r in self.dbg.read_sp():
-            reg_string += f"{r:02x}"
-        self.send(reg_string)
 
     def handle_write_regs(self, command: str) -> None:
         new_regs = bytearray.fromhex(command)
         try:
             self.dbg.write_regfile(new_regs[0:31])
             self.send("OK")
-        except:
+        except Exception as exc:
             self.send("E00")
+            logger.error("Caught exception on register write: %s", exc, exc_info=True)
 
     def handle_kill(self, _command: str) -> None:
         self.dbg.reset()
@@ -316,14 +321,8 @@ class GDBStub:
         elif reg_num == 34:
             # GDB register 34 = PC
             pc = self.dbg.read_pc()
-            print(pc)
-            pc <<= 1
-            # print(pc)
-            pc_bytes = struct.pack("<I", (pc & 0xFFFFFFFF))
-            # pc_str = "".join([format(x, "02x") for x in pc_bytes])
-            pc_str = pc_bytes.hex()
-            print(pc_str)
-            self.send(pc_str)
+            pc_bytes = struct.pack("<I", ((pc << 1) & 0xFFFFFFFF))
+            self.send(pc_bytes.hex())
         else:
             logger.error(f"Unhandled register read! {reg_num=}")
             self.send("")
@@ -338,11 +337,30 @@ class GDBStub:
         try:
             self.dbg.write_regfile(regfile)
             self.send("OK")
-        except:
+        except Exception as exc:
             self.send("E00")
+            logger.error("Caught exception on register write: %s", exc, exc_info=True)
 
-    def handle_restart(self, _command: str) -> None:
+    def handle_reset(self, _command: str) -> None:
         self.dbg.reset()
 
+    def handle_restart(self, _command: str) -> None:
+        if self.extended_mode:
+            self.dbg.reset()
 
+    def handle_v_command(self, command: str) -> None:
+        action = command
+        rest = ""
 
+        if "?" in command:
+            action, _, rest = command.partition("?")
+        elif ";" in command:
+            action, _, rest = command.partition(";")
+
+        logger.warning("todo: impl v command %s %s", action, rest)
+        self.send("")
+
+    def handle_detach(self, _command: str) -> None:
+        self.dbg.detach()
+        self.send("OK")
+        self.quit()

@@ -23,27 +23,23 @@ def setup_logging(verbose_level: int) -> None:
     log_err = logging.StreamHandler(sys.stderr)
     log_err.setLevel(logging.WARNING)
 
-    if verbose_level == 1:
-        # -v = some debug logging
-        def log_filter(record: logging.LogRecord):
-            if record.levelno == logging.DEBUG:
-                return not record.name.startswith("pyedbglib")
-            if record.levelno == logging.INFO:
-                return not record.name.startswith("pymcuprog")
-            return True
+    edbg_filter = lambda r: not (r.levelno == logging.DEBUG and r.name.startswith("pyedbglib"))
+    mcu_filter = lambda r: not (r.levelno == logging.INFO and r.name.startswith("pymcuprog"))
 
+    if verbose_level == 0:
+        log_out.setLevel(logging.INFO)
+        log_out.addFilter(edbg_filter)
+        log_out.addFilter(mcu_filter)
+    elif verbose_level == 1:
+        # -v = some debug logging
         log_out.setLevel(logging.DEBUG)
-        log_out.addFilter(log_filter)
+        log_out.addFilter(edbg_filter)
+        log_out.addFilter(mcu_filter)
     elif verbose_level == 2:
         # -vv = more debug
-        def log_filter(record: logging.LogRecord):
-            if record.levelno == logging.DEBUG:
-                return not record.name.startswith("pyedbglib")
-            return True
-
         log_out.setLevel(logging.DEBUG)
-        log_out.addFilter(log_filter)
-    elif verbose_level >= 3:
+        log_out.addFilter(edbg_filter)
+    else:
         # -vvv = even more debug messages (also include hid messages from edbg)
         log_out.setLevel(logging.DEBUG)
 
@@ -51,27 +47,39 @@ def setup_logging(verbose_level: int) -> None:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(prog="pyAVRdbg")
+    parser = argparse.ArgumentParser(
+        prog="pyAVRdbg",
+    )
 
-    parser.add_argument("-p", "--part", required=True, help="AVR Device to Debug")
-    parser.add_argument("-H", "--host", default="127.0.0.1", help="GDB Listening Address")
-    parser.add_argument("-P", "--port", type=int, default=1234, help="GDB Listening Port")
-    parser.add_argument("-v", "--verbose", action="count", help="Additional debug logging")
+    parser.add_argument("-t", "--target", required=True, metavar="NAME", help="Target device name ('help' to list)")
+    parser.add_argument("-H", "--host", default="127.0.0.1", help="Address to bind to (default: %(default)s)")
+    parser.add_argument("-P", "--port", type=int, default=1234, help="Port to listen on (default: %(default)s)")
+    parser.add_argument("-v", "--verbose", action="count", default=0, help="Additional debug logging")
 
     args = parser.parse_args()
-    print(args)
     setup_logging(args.verbose)
 
-    if args.part == "help" or args.part == "":
-        logging.error("todo: list supported devices")
-        exit(1)
+    if args.target == "help":
+        devices = deviceinfo.get_supported_devices()
+        devices.sort()
+
+        supported = []
+        for d in devices:
+            info = deviceinfo.getdeviceinfo(d)
+            if info["architecture"] in ["avr8", "avr8x"]:
+                supported.append(d)
+
+        print("Supported targets:")
+        for d in supported:
+            print(f" {d}")
+        exit(0)
 
     try:
-        deviceinfo.getdeviceinfo(args.part)
+        deviceinfo.getdeviceinfo(args.target)
     except ImportError:
-        logging.error("Part not found: %s", args.part)
+        logging.error("Part not found: %s", args.target)
         exit(1)
 
-    gdb = gdbstub.GDBStub(args.part, args.host, args.port)
+    gdb = gdbstub.GDBStub(args.target, args.host, args.port)
     gdb.listen_for_connection()
     exit()

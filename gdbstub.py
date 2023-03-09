@@ -1,10 +1,8 @@
-import logging
 import re
 import signal
 import struct
 from socket import socket, AF_INET, SOCK_STREAM
 from select import select
-from types import FrameType
 from typing import Dict, Callable, Optional
 import enum
 
@@ -13,7 +11,7 @@ from pymcuprog.deviceinfo import deviceinfo
 
 from debugger import Debugger
 
-
+import logging
 logger = logging.getLogger(__name__)
 
 
@@ -57,7 +55,7 @@ class GDBStub:
         self.send_ack = True
         self.extended_mode = False
 
-    def signal_handler(self, _sig: int, _frame: Optional[FrameType]) -> None:
+    def signal_handler(self, _sig, _frame) -> None:
         logger.info("Received Ctrl+C, quitting")
         self.quit()
 

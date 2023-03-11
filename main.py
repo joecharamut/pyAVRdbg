@@ -6,11 +6,8 @@ from pymcuprog.deviceinfo import deviceinfo
 import gdbstub
 
 
-# monkey-patch logging to add trace logging
-logging.TRACE = 5  # noqa
-logging.addLevelName(logging.TRACE, "TRACE")  # noqa
-logging.Logger.trace = lambda inst, msg, *args, **kwargs: inst.log(logging.TRACE, msg, *args, **kwargs)  # noqa
-logging.trace = lambda msg, *args, **kwargs: logging.log(logging.TRACE, msg, *args, **kwargs)  # noqa
+def clamp(val: int, min_val: int, max_val: int) -> int:
+    return min_val if val < min_val else max_val if val > max_val else val
 
 
 def setup_logging(verbose_level: int) -> None:
@@ -23,38 +20,39 @@ def setup_logging(verbose_level: int) -> None:
     log_err = logging.StreamHandler(sys.stderr)
     log_err.setLevel(logging.WARNING)
 
-    edbg_filter = lambda r: not (r.levelno == logging.DEBUG and r.name.startswith("pyedbglib"))
-    mcu_filter = lambda r: not (r.levelno == logging.INFO and r.name.startswith("pymcuprog"))
+    def edbg_filter(r: logging.LogRecord):
+        return not (r.levelno == logging.DEBUG and r.name.startswith("pyedbglib"))
 
-    if verbose_level == 0:
-        log_out.setLevel(logging.INFO)
-        log_out.addFilter(edbg_filter)
-        log_out.addFilter(mcu_filter)
-    elif verbose_level == 1:
-        # -v = some debug logging
-        log_out.setLevel(logging.DEBUG)
-        log_out.addFilter(edbg_filter)
-        log_out.addFilter(mcu_filter)
-    elif verbose_level == 2:
-        # -vv = more debug
-        log_out.setLevel(logging.DEBUG)
-        log_out.addFilter(edbg_filter)
-    else:
-        # -vvv = even more debug messages (also include hid messages from edbg)
-        log_out.setLevel(logging.DEBUG)
+    def mcu_filter(r: logging.LogRecord):
+        return not (r.levelno == logging.INFO and r.name.startswith("pymcuprog"))
+
+    def trace_filter(r: logging.LogRecord):
+        return not (r.levelno == logging.DEBUG and r.name.endswith("trace"))
+
+    filter_settings = [
+        (logging.INFO,  [edbg_filter, mcu_filter, trace_filter]),    # normal
+        (logging.DEBUG, [edbg_filter, mcu_filter]),                  # -v
+        (logging.DEBUG, [edbg_filter]),                              # -vv
+        (logging.DEBUG, []),                                         # -vvv
+    ]
+
+    level = clamp(verbose_level, 0, len(filter_settings)-1)
+    log_out.setLevel(filter_settings[level][0])
+    for f in filter_settings[level][1]:
+        log_out.addFilter(f)
 
     logging.basicConfig(level=logging.DEBUG, handlers=[log_out, log_err])
 
 
-if __name__ == "__main__":
+def main() -> int:
     parser = argparse.ArgumentParser(
         prog="pyAVRdbg",
     )
 
     parser.add_argument("-t", "--target", required=True, metavar="NAME", help="Target device name ('help' to list)")
     parser.add_argument("-H", "--host", default="127.0.0.1", help="Address to bind to (default: %(default)s)")
-    parser.add_argument("-P", "--port", type=int, default=1234, help="Port to listen on (default: %(default)s)")
-    parser.add_argument("-v", "--verbose", action="count", default=0, help="Additional debug logging")
+    parser.add_argument("-P", "--port", default=1234, type=int, help="Port to listen on (default: %(default)s)")
+    parser.add_argument("-v", "--verbose", default=0, action="count", help="Additional debug logging")
 
     args = parser.parse_args()
     setup_logging(args.verbose)
@@ -72,14 +70,18 @@ if __name__ == "__main__":
         print("Supported targets:")
         for d in supported:
             print(f" {d}")
-        exit(0)
+        return 1
 
     try:
-        deviceinfo.getdeviceinfo(args.target)
+        logging.debug("Target info: %s", deviceinfo.getdeviceinfo(args.target))
     except ImportError:
         logging.error("Part not found: %s", args.target)
-        exit(1)
+        return 1
 
     gdb = gdbstub.GDBStub(args.target, args.host, args.port)
     gdb.listen_for_connection()
-    exit()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

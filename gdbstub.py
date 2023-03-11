@@ -1,10 +1,10 @@
 import re
-import signal
 import struct
+import sys
+from signal import signal, Signals
 from socket import socket, AF_INET, SOCK_STREAM
 from select import select
 from typing import Dict, Callable, Optional
-import enum
 
 from pyedbglib.protocols import avr8protocol
 from pymcuprog.deviceinfo import deviceinfo
@@ -13,22 +13,7 @@ from debugger import Debugger
 
 import logging
 logger = logging.getLogger(__name__)
-
-
-def calc_checksum(data: str | bytes) -> int:
-    if isinstance(data, str):
-        data = data.encode("ascii")
-    return sum(data) % 256
-
-
-class Signal(enum.IntEnum):
-    NONE = 0
-    SIGHUP = 1
-    SIGINT = 2
-    SIGQUIT = 3
-    SIGILL = 4
-    SIGTRAP = 5
-    SIGABRT = 6
+packet_logger = logger.getChild("trace")
 
 
 class GDBStub:
@@ -36,21 +21,28 @@ class GDBStub:
     NACK = "-"
     PACKET_SIZE = 4096
 
+    @staticmethod
+    def checksum(data: str | bytes) -> int:
+        if isinstance(data, str):
+            data = data.encode("ascii")
+        return sum(data) % 256
+
     def __init__(self, device_name: str, host: str, port: int) -> None:
-        self.dev = deviceinfo.getdeviceinfo(device_name)
-        self.mem = deviceinfo.DeviceMemoryInfo(self.dev)
+        self.dev_info = deviceinfo.getdeviceinfo(device_name)
+        self.mem_info = deviceinfo.DeviceMemoryInfo(self.dev_info)
 
         try:
             self.dbg = Debugger(device_name)
         except AttributeError:
-            raise RuntimeError("Could not open debugger") from None
+            logger.error("Could not open debugger")
+            sys.exit(1)
 
         self.address = (host, port)
         self.sock = socket(AF_INET, SOCK_STREAM)
         self.conn = None
 
         self.last_packet = None
-        self.last_signal = Signal.NONE
+        self.last_signal = None
 
         self.send_ack = True
         self.extended_mode = False
@@ -69,7 +61,7 @@ class GDBStub:
             pass
 
         logger.info("Waiting for GDB session on %s:%s", self.address[0], self.address[1])
-        signal.signal(signal.SIGINT, self.signal_handler)
+        signal(Signals.SIGINT, self.signal_handler)
 
         self.sock.bind(self.address)
         self.sock.listen()
@@ -83,14 +75,14 @@ class GDBStub:
                 readable, _, _ = select([self.conn], [], [], 0.5)
                 for c in readable:
                     if data := c.recv(GDBStub.PACKET_SIZE):
-                        logger.debug("<- %s", data)
+                        packet_logger.debug("<- %s", data)
                         self.handle_packet(data)
 
                 while event := self.dbg.poll_events():
                     print(event)
                     event_type, pc, break_cause = event
                     if event_type == avr8protocol.Avr8Protocol.EVT_AVR8_BREAK and break_cause == 1:
-                        self.send_halt_reply(Signal.SIGTRAP)
+                        self.send_halt_reply(Signals.SIGTRAP)
         except Exception as exc:
             self.quit(exc)
 
@@ -101,18 +93,18 @@ class GDBStub:
         self.sock.close()
         if exc:
             raise exc
-        exit(0)
+        sys.exit(0)
 
     def send(self, packet_data: str, raw: bool = False) -> None:
         self.last_packet = packet_data
 
-        check = calc_checksum(packet_data)
         if not raw:
+            check = GDBStub.checksum(packet_data)
             message = f"${packet_data}#{check:02x}"
         else:
             message = packet_data
 
-        logger.debug("-> %s", message)
+        packet_logger.debug("-> %s", message)
         self.conn.sendall(message.encode("ascii"))
 
     def handle_packet(self, data: bytes) -> None:
@@ -123,7 +115,7 @@ class GDBStub:
 
         data = data.decode("ascii")
         for packet_data, checksum in re.findall(r"\$([^#]*)#([0-9a-f]{2})", data):
-            if int(checksum, 16) != calc_checksum(packet_data):
+            if int(checksum, 16) != GDBStub.checksum(packet_data):
                 logger.error(f"Received invalid packet: '{data}'")
                 if self.send_ack:
                     self.send(GDBStub.NACK, raw=True)
@@ -132,7 +124,7 @@ class GDBStub:
                     self.send(GDBStub.ACK, raw=True)
                 self.handle_command(packet_data)
 
-    def interrupt_target(self, reason: Optional[Signal] = Signal.SIGINT) -> None:
+    def interrupt_target(self, reason: Optional[Signals] = Signals.SIGINT) -> None:
         self.dbg.stop()
         self.send_halt_reply(reason)
 
@@ -167,10 +159,11 @@ class GDBStub:
             # unknown command reply
             self.send("")
 
-    def send_halt_reply(self, sig: Optional[Signal] = None) -> None:
+    def send_halt_reply(self, sig: Optional[Signals] = None) -> None:
         if sig:
             self.last_signal = sig
-        self.send(f"S{self.last_signal:02x}")
+        sig_val = self.last_signal if self.last_signal else 0
+        self.send(f"S{sig_val:02x}")
 
     def handle_halt_query(self, _command: str) -> None:
         self.send_halt_reply()
@@ -197,7 +190,10 @@ class GDBStub:
             self.send("0")
         elif name == "Offsets":
             # todo: report offsets from device_info?
-            self.send("Text=8000;Data=3E00;Bss=3E00")
+            # self.send("Text=8000;Data=3E00;Bss=3E00")
+            flash_addr = self.mem_info.memory_info_by_name("flash")["address"]
+            sram_addr = self.mem_info.memory_info_by_name("internal_sram")["address"]
+            self.send("Text={:x};Data={:x};Bss={:x}".format(flash_addr, sram_addr, sram_addr))
         elif name == "Symbol":
             self.send("OK")
         else:
@@ -218,7 +214,7 @@ class GDBStub:
             addr = int(command, 16)
             logger.debug("s cmd=%s addr=0x%04x", command, addr)
         self.dbg.step()
-        self.send_halt_reply(Signal.SIGTRAP)
+        self.send_halt_reply(Signals.SIGTRAP)
 
     def handle_continue(self, command: str) -> None:
         if len(command):

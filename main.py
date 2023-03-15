@@ -1,6 +1,8 @@
 import logging
 import sys
 import argparse
+import traceback
+
 from pymcuprog.deviceinfo import deviceinfo
 
 import gdbstub
@@ -47,9 +49,10 @@ def setup_logging(verbose_level: int) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(
         prog="pyAVRdbg",
+        description="GDB Remote Stub for AVR targets using UPDI over CMSIS-DAP"
     )
 
-    parser.add_argument("-t", "--target", required=True, metavar="NAME", help="Target device name ('help' to list)")
+    parser.add_argument("-t", "--target", required=True, help="Target device name ('help' to list)")
     parser.add_argument("-H", "--host", default="127.0.0.1", help="Address to bind to (default: %(default)s)")
     parser.add_argument("-P", "--port", default=1234, type=int, help="Port to listen on (default: %(default)s)")
     parser.add_argument("-v", "--verbose", default=0, action="count", help="Additional debug logging")
@@ -58,22 +61,18 @@ def main() -> int:
     setup_logging(args.verbose)
 
     if args.target == "help":
-        devices = deviceinfo.get_supported_devices()
-        devices.sort()
-
-        supported = []
-        for d in devices:
-            info = deviceinfo.getdeviceinfo(d)
-            if info["architecture"] in ["avr8", "avr8x"]:
-                supported.append(d)
-
         print("Supported targets:")
-        for d in supported:
-            print(f" {d}")
+        for dev in sorted(deviceinfo.get_supported_devices()):
+            info = deviceinfo.getdeviceinfo(dev)
+            if info and info["architecture"] in ["avr8", "avr8x"]:
+                print(f" {dev}")
         return 1
 
     try:
-        logging.debug("Target info: %s", deviceinfo.getdeviceinfo(args.target))
+        info = deviceinfo.getdeviceinfo(args.target)
+        logging.debug("Target info:")
+        for k, v in info.items():
+            logging.debug(" %s: %s", k, v)
     except ImportError:
         logging.error("Part not found: %s", args.target)
         return 1

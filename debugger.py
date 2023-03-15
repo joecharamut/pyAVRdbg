@@ -1,9 +1,12 @@
-from typing import Optional, Any
+import struct
+from typing import Optional, Any, List
 
 from pyedbglib.hidtransport.hidtransportfactory import hid_transport
+from pyedbglib.protocols.avr8protocol import Avr8Protocol
 from pyedbglib.protocols.avrcmsisdap import AvrCommand
 from pyedbglib.protocols import housekeepingprotocol
 from pyedbglib.protocols import avr8protocol
+from pyedbglib.protocols.jtagice3protocol import Jtagice3Protocol
 
 from pymcuprog.deviceinfo import deviceinfo
 from pymcuprog.nvmupdi import NvmAccessProviderCmsisDapUpdi
@@ -31,8 +34,22 @@ class Debugger:
 
     def poll_events(self) -> Optional[bytearray]:
         event = self.device.avr.protocol.poll_events()
-        # Verifying data is an event
-        if event and event[0] == AvrCommand.AVR_EVENT:
+        if not event:
+            return None
+
+        logger.debug("event: (%s bytes) [%s]", len(event), event.hex())
+
+        if event[0] == Jtagice3Protocol.HANDLER_AVR8_GENERIC:
+            event = event[1:]
+            if event[0] == Avr8Protocol.EVT_AVR8_BREAK:
+                event_id, pc, cause, ext_info = struct.unpack("<BIBH", event)
+                pc = (pc << 1) & 0xFFFFFFFF  # pc is a word addr, convert to byte addr
+                logger.info("Received EVT_AVR8_BREAK(id=0x%x, pc=0x%08x, cause=0x%x, ext=0x%x)", event_id, pc, cause, ext_info)
+                return (event_id, pc, None)
+            else:
+                logger.debug("Unknown AVR8_GENERIC event (id 0x%x, data=%s)", event[0], event[1:])
+        elif event[0] == AvrCommand.AVR_EVENT:
+            # Verifying data is an event
             size = int.from_bytes(event[1:3], byteorder="big")
             if size > 0:
                 # event received
@@ -69,9 +86,9 @@ class Debugger:
         logger.debug(f"Address 0x{address:04x} is {name} [base: 0x{base:04x}, read_size: {read_size}]")
 
         offset = address - base
-        align = offset % read_size
-        data = self.device.read(mem_type, offset - align, count + align)
-        return data[align:]
+        start_align = offset % read_size
+        data = self.device.read(mem_type, offset - start_align, count + start_align)
+        return data[start_align:count+start_align]
 
     def write_mem(self, address: int, data: bytes) -> bool:
         logger.info(f"Writing {len(data)} bytes to address 0x{address:04x}")
@@ -123,13 +140,13 @@ class Debugger:
             avr8protocol.Avr8Protocol.AVR8_CTXT_TEST,
             avr8protocol.Avr8Protocol.AVR8_TEST_TGT_RUNNING
         ))
-        logging.info(f"Running state is {str(running)}")
+        # logging.info(f"Running state is {str(running)}")
         return running
 
     # Registers
 
     def read_regfile(self) -> bytearray:
-        return self.device.avr.protocol.regfile_read()
+        return bytearray(self.device.avr.protocol.regfile_read())
 
     def write_regfile(self, regs: bytearray) -> Any:
         return self.device.avr.protocol.regfile_write(regs)
@@ -143,14 +160,14 @@ class Debugger:
 
     def read_sreg(self) -> bytearray:
         # SREG is 1 byte of IO memory, not a real register
-        return self.device.avr.protocol.memory_read(
+        return bytearray(self.device.avr.protocol.memory_read(
             avr8protocol.Avr8Protocol.AVR8_MEMTYPE_OCD,
             avr8protocol.Avr8Protocol.AVR8_MEMTYPE_OCD_SREG,
             1
-        )
+        ))
 
     def read_sp(self) -> bytearray:
-        return self.device.avr.stack_pointer_read()
+        return bytearray(self.device.avr.stack_pointer_read())
 
     # SoftwareBreakpoints EDBG expects these addresses in bytes
     # Multiple SW breakpoints can be defined by shifting 4 bytes to the left

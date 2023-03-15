@@ -82,7 +82,3 @@ def main() -> int:
     gdb = GDBStub(args.target, args.host, args.port)
     gdb.listen_for_connection()
     return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())

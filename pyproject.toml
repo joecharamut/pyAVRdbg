@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pyavrdbg_TEST"
+version = "0.0.1"
+requires-python = ">=3.8"
+dependencies = [
+    "pymcuprog",
+    "pyedbglib"
+]
+description = "A GDB RSP server for AVR debuggers supported by pymcuprog"
+readme = "README.md"
+license.text = "MIT"
+authors = [
+    { name = "Joseph Charamut", email = "example@example.com" },
+    { name = "Ole Sivert Aarhaug", email = "example@example.com" }
+]
+maintainers = [
+    { name = "Joseph Charamut", email = "example@example.com" }
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/joecharamut/pyAVRdbg"
+"Bug Tracker" = "https://github.com/joecharamut/pyAVRdbg/issues"

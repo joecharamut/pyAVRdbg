@@ -93,9 +93,7 @@ class GDBStub:
                         self.handle_packet(data)
 
                 while event := self.dbg.poll_events():
-                    print(event)
-                    event_type, pc, break_cause = event
-                    if event_type == Avr8Protocol.EVT_AVR8_BREAK:
+                    if event[0] == Avr8Protocol.EVT_AVR8_BREAK:
                         if self.waiting_for_break:
                             self.waiting_for_break = False
                             self.send_halt_reply(Signals.SIGTRAP)
@@ -328,11 +326,9 @@ class GDBStub:
 
     def handle_write_regs(self, command: str) -> None:
         new_regs = bytearray.fromhex(command)
-        try:
-            self.dbg.write_regfile(new_regs[0:31])
+        if self.dbg.write_regfile(new_regs[0:31]):
             self.send("OK")
-        except Exception as exc:
-            logger.error("Caught exception on register write: %s", exc, exc_info=True)
+        else:
             self.send("E00")
 
     def handle_kill(self, _command: str) -> None:
@@ -357,8 +353,7 @@ class GDBStub:
             self.send(sp.hex())
         elif reg_num == 34:
             # 'R34' = PC
-            # todo: read_pc returns a word address (adjust to bytes in dbg func?)
-            pc = (self.dbg.read_pc() << 1) & 0x1FFFF
+            pc = self.dbg.read_pc()
             pc += 0x8000
             pc_bytes = struct.pack("<I", pc)
             self.send(pc_bytes.hex())

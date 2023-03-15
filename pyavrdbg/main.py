@@ -1,10 +1,10 @@
 import logging
 import sys
 import argparse
-
 from pymcuprog.deviceinfo import deviceinfo
 
-import gdbstub
+from .gdbstub import GDBStub
+logger = logging.getLogger(__name__)
 
 
 def clamp(val: int, min_val: int, max_val: int) -> int:
@@ -50,7 +50,7 @@ def setup_logging(verbose_level: int) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        prog="pyAVRdbg",
+        prog="pyavrdbg",
         description="GDB Remote Stub for AVR targets using UPDI over CMSIS-DAP"
     )
 
@@ -72,14 +72,14 @@ def main() -> int:
 
     try:
         info = deviceinfo.getdeviceinfo(args.target)
-        logging.debug("Target info:")
+        logger.debug("Target info:")
         for k, v in info.items():
-            logging.debug(" %s: %s", k, v)
+            logger.debug(" %s: %s", k, v)
     except ImportError:
-        logging.error("Part not found: %s", args.target)
+        logger.error("Part not found: %s", args.target)
         return 1
 
-    gdb = gdbstub.GDBStub(args.target, args.host, args.port)
+    gdb = GDBStub(args.target, args.host, args.port)
     gdb.listen_for_connection()
     return 0
 

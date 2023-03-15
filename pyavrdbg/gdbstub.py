@@ -9,7 +9,7 @@ from typing import Dict, Callable, Optional
 from pyedbglib.protocols.avr8protocol import Avr8Protocol
 from pymcuprog.deviceinfo import deviceinfo
 
-from debugger import Debugger
+from .debugger import Debugger
 
 import logging
 logger = logging.getLogger(__name__)

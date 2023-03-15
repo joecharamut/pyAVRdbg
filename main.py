@@ -1,7 +1,6 @@
 import logging
 import sys
 import argparse
-import traceback
 
 from pymcuprog.deviceinfo import deviceinfo
 
@@ -10,6 +9,18 @@ import gdbstub
 
 def clamp(val: int, min_val: int, max_val: int) -> int:
     return min_val if val < min_val else max_val if val > max_val else val
+
+
+def log_filter_edbg(r: logging.LogRecord) -> bool:
+    return not (r.levelno == logging.DEBUG and r.name.startswith("pyedbglib"))
+
+
+def log_filter_mcu(r: logging.LogRecord) -> bool:
+    return not (r.levelno == logging.INFO and r.name.startswith("pymcuprog"))
+
+
+def log_filter_trace(r: logging.LogRecord) -> bool:
+    return not (r.levelno == logging.DEBUG and r.name.endswith("trace"))
 
 
 def setup_logging(verbose_level: int) -> None:
@@ -22,20 +33,11 @@ def setup_logging(verbose_level: int) -> None:
     log_err = logging.StreamHandler(sys.stderr)
     log_err.setLevel(logging.WARNING)
 
-    def edbg_filter(r: logging.LogRecord):
-        return not (r.levelno == logging.DEBUG and r.name.startswith("pyedbglib"))
-
-    def mcu_filter(r: logging.LogRecord):
-        return not (r.levelno == logging.INFO and r.name.startswith("pymcuprog"))
-
-    def trace_filter(r: logging.LogRecord):
-        return not (r.levelno == logging.DEBUG and r.name.endswith("trace"))
-
     filter_settings = [
-        (logging.INFO,  [edbg_filter, mcu_filter, trace_filter]),    # normal
-        (logging.DEBUG, [edbg_filter, mcu_filter]),                  # -v
-        (logging.DEBUG, [edbg_filter]),                              # -vv
-        (logging.DEBUG, []),                                         # -vvv
+        (logging.INFO,  [log_filter_edbg, log_filter_mcu, log_filter_trace]),   # normal
+        (logging.DEBUG, [log_filter_edbg, log_filter_mcu]),                     # -v
+        (logging.DEBUG, [log_filter_edbg]),                                     # -vv
+        (logging.DEBUG, []),                                                    # -vvv
     ]
 
     level = clamp(verbose_level, 0, len(filter_settings)-1)

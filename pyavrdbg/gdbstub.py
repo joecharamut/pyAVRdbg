@@ -50,7 +50,6 @@ class GDBStub:
         self.send_ack = True
         self.extended_mode = False
 
-        self.fake_pid = 1
         self.waiting_for_break = False
 
     def signal_handler(self, _sig, _frame) -> None:
@@ -149,7 +148,7 @@ class GDBStub:
         self.send_halt_reply(reason)
 
     def wait_for_break(self):
-        while self.dbg.read_running_state():
+        while True:
             if event := self.dbg.poll_events():
                 print(event)
                 if event[0] == Avr8Protocol.EVT_AVR8_BREAK:
@@ -424,6 +423,7 @@ class GDBStub:
             return "Hello, world!\n"
         elif command == "reset":
             self.dbg.reset()
+            self.wait_for_break()
             return ""
         else:
             return None

@@ -75,13 +75,25 @@ class Debugger:
 
         name = mem_type["name"]
         base = mem_type["address"]
+        mem_size = mem_type["size"]
         read_size = mem_type["read_size"]
-        logger.debug(f"Address 0x{address:04x} is {name} [base: 0x{base:04x}, read_size: {read_size}]")
+        page_size = mem_type["page_size"]
+        logger.debug(f"Address 0x{address:04x} is {name} [base: 0x{base:04x}, size: {mem_size}, page_size: {page_size}, read_size: {read_size}]")
+
+        if (address + count) >= (base + mem_size):
+            logger.warning("mem_read count exceeds memory area size!")
+            overflow = (address + count) - (base + mem_size)
+            count -= overflow
+            logger.debug(f"New read count: {count}")
 
         offset = address - base
         start_align = offset % read_size
-        data = self.device.read(mem_type, offset - start_align, count + start_align)
-        return data[start_align:count+start_align]
+        try:
+            data = self.device.read(mem_type, offset - start_align, count + start_align)
+            return data[start_align:count+start_align]
+        except Jtagice3ResponseError as exc:
+            logger.error("read_mem: Exception %s (Code %s)", str(exc), exc.code)
+            return None
 
     def write_mem(self, address: int, data: bytes) -> bool:
         """

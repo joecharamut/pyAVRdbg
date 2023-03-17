@@ -36,7 +36,7 @@ class GDBStub:
 
         try:
             self.dbg = Debugger(device_name)
-        except AttributeError:
+        except (AttributeError, RuntimeError):
             logger.error("Could not open debugger")
             sys.exit(1)
 
@@ -102,11 +102,17 @@ class GDBStub:
     def quit(self, exc: Optional[Exception] = None, exit_code: int = 0) -> None:
         self.dbg.cleanup()
         if self.conn:
-            self.conn.shutdown(SHUT_RDWR)
-            self.conn.close()
+            try:
+                self.conn.shutdown(SHUT_RDWR)
+                self.conn.close()
+            except OSError:
+                pass
         if self.sock:
-            self.sock.shutdown(SHUT_RDWR)
-            self.sock.close()
+            try:
+                self.sock.shutdown(SHUT_RDWR)
+                self.sock.close()
+            except OSError:
+                pass
         if exc:
             raise exc
         sys.exit(exit_code)
@@ -129,7 +135,7 @@ class GDBStub:
             if self.waiting_for_break:
                 self.waiting_for_break = False
                 self.dbg.stop()
-                self.send_halt_reply(Signals.SIGTRAP)
+                self.send_halt_reply(Signals.SIGINT)
             return
 
         data = data.decode("ascii")

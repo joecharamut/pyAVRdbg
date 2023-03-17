@@ -1,6 +1,8 @@
 import struct
+import time
 from typing import Optional
 
+from pyedbglib.hidtransport.hidtransportbase import HidTransportBase
 from pyedbglib.hidtransport.hidtransportfactory import hid_transport
 from pyedbglib.protocols.avr8protocol import Avr8Protocol
 from pyedbglib.protocols.housekeepingprotocol import Jtagice3HousekeepingProtocol
@@ -14,21 +16,58 @@ logger = logging.getLogger(__name__)
 
 
 class Debugger:
-    def __init__(self, device_name) -> None:
-        # Make a connection
-        self.transport = hid_transport()
-        self.transport.disconnect()
-        # Connect
-        self.transport.connect()
+    transport: HidTransportBase
+
+    def __init__(self, device_name: str) -> None:
+        # setup device information
         self.device_info = deviceinfo.getdeviceinfo(device_name)
         self.memory_info = deviceinfo.DeviceMemoryInfo(self.device_info)
+
+        # connect to debugger
+        self.transport = hid_transport()
+        self.transport.connect()
         self.housekeeper = Jtagice3HousekeepingProtocol(self.transport)
         self.housekeeper.start_session()
+
+        # prep target
         self.device = NvmAccessProviderCmsisDapUpdi(self.transport, self.device_info)
-        # self.device.avr.deactivate_physical()
-        self.device.avr.activate_physical()
-        # Start debug by attaching (live)
-        self.device.avr.protocol.attach()
+
+        try:
+            # connect to target
+            self.device.avr.activate_physical()
+            self.device.avr.protocol.attach()
+            self.device.avr.protocol.reset()
+        except Jtagice3ResponseError as exc:
+            logger.error("Error connecting to target device: %s", exc)
+            raise RuntimeError
+        except KeyError:
+            logger.error("Error connecting to target device: timed out (is it connected?)")
+            raise RuntimeError
+
+        # check target is the correct id
+        dev_id = 0
+        retries = 0
+        while retries < 5:
+            try:
+                dev_id = int.from_bytes(self.device.avr.read_device_id(), byteorder="big")
+                break
+            except Jtagice3ResponseError as exc:
+                logger.error("Error reading device id: %s", exc)
+                retries += 1
+                time.sleep(0.5)
+
+        spec_dev_id = self.device_info["device_id"]
+        if dev_id != spec_dev_id:
+            suggested_part = "unknown"
+            for part in deviceinfo.get_supported_devices():
+                info = deviceinfo.getdeviceinfo(part)
+                if "device_id" in info and info["device_id"] == dev_id:
+                    suggested_part = part
+                    break
+            logger.error("Target device ID does not match specified target!")
+            logger.error(f"\tExpected: 0x{spec_dev_id:06X}")
+            logger.error(f"\tReceived: 0x{dev_id:06X} (possibly {suggested_part})")
+            raise RuntimeError("Incorrect target specified")
 
     def poll_events(self) -> Optional[tuple]:
         """
@@ -301,9 +340,7 @@ class Debugger:
 
         :param address: byte address of breakpoint
         """
-        # target expects word address
-        word_address = address >> 1
-        self.device.avr.breakpoint_set(word_address)
+        self.device.avr.breakpoint_set(address)
 
     def clear_hw_breakpoint(self) -> None:
         """

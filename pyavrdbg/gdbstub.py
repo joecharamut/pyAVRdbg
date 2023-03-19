@@ -49,6 +49,8 @@ class GDBStub:
 
         self.send_ack = True
         self.extended_mode = False
+        self.send_stop_reason_hw = False
+        self.send_stop_reason_sw = False
 
         self.waiting_for_break = False
 
@@ -85,11 +87,17 @@ class GDBStub:
         logger.info("GDB Connected: %s", addr)
         try:
             while True:
-                readable, _, _ = select([self.conn], [], [], 0.1)
-                for c in readable:
-                    if data := c.recv(GDBStub.PACKET_SIZE):
+                readable, writeable, errored = select([self.conn], [self.conn], [self.conn], 0.1)
+                if readable:
+                    if data := self.conn.recv(GDBStub.PACKET_SIZE):
                         packet_logger.debug("<- %s", data.replace(b"\x03", b"[0x03]").decode("ascii"))
                         self.handle_packet(data)
+
+                if not writeable:
+                    logger.error("not writeable?")
+
+                if errored:
+                    logger.error(errored)
 
                 while event := self.dbg.poll_events():
                     if event[0] == Avr8Protocol.EVT_AVR8_BREAK:
@@ -130,7 +138,7 @@ class GDBStub:
         self.conn.sendall(message.encode("ascii"))
 
     def handle_packet(self, data: bytes) -> None:
-        if data == b"\x03":
+        if data[0] == b"\x03":
             logger.info("Interrupt request received")
             if self.waiting_for_break:
                 self.waiting_for_break = False
@@ -213,8 +221,22 @@ class GDBStub:
         name, _, rest = command.partition(":")
 
         if name == "Supported":
-            features = rest.split(";")
-            logger.debug("GDB reports supporting %s", features)
+            features = {}
+            for feat in rest.split(";"):
+                k, v = feat, None
+                if feat[-1] in ["+", "-"]:
+                    k, v = feat[:-1], feat[-1]
+                elif "=" in feat:
+                    k, v = feat.split("=")
+                features[k] = v
+            logger.debug("GDB reports %s", features)
+
+            if "swbreak" in features and features["swbreak"] == "+":
+                self.send_stop_reason_sw = True
+
+            if "hwbreak" in features and features["hwbreak"] == "+":
+                self.send_stop_reason_hw = True
+
             stub_features = [
                 f"PacketSize={GDBStub.PACKET_SIZE:x}",
                 "QStartNoAckMode+",
@@ -229,7 +251,8 @@ class GDBStub:
             self.send(f"Text={flash_addr:x};Data={sram_addr:x};Bss={sram_addr:x}")
         elif name == "Symbol":
             self.send("OK")
-        elif name.startswith("Rcmd"):
+        elif name.startswith("Rcmd,"):
+            # qRcmd,command
             name, _, cmd = name.partition(",")
             command = "".join([chr(b) for b in bytearray.fromhex(cmd)])
             logger.debug("qRcmd: %s", command)

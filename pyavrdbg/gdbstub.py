@@ -170,24 +170,24 @@ class GDBStub:
 
     def handle_command(self, command: str) -> None:
         command_handlers: Dict[str, Callable[[str], None]] = {
-            "?": self.handle_halt_query,
             # "!": self.handle_extended_enable,
-            "q": self.handle_query,
-            "Q": self.handle_query_set,
-            "s": self.handle_step,
+            "?": self.handle_halt_query,
             "c": self.handle_continue,
-            "Z": self.handle_add_break,
-            "z": self.handle_remove_break,
-            "m": self.handle_read_mem,
-            "M": self.handle_write_mem,
+            "D": self.handle_detach,
             "g": self.handle_read_regs,
             "G": self.handle_write_regs,
             "k": self.handle_kill,
+            "m": self.handle_read_mem,
+            "M": self.handle_write_mem,
             "p": self.handle_read_one_reg,
             "P": self.handle_write_one_reg,
+            "q": self.handle_general_query,
+            "Q": self.handle_general_set,
             "R": self.handle_restart,
+            "s": self.handle_step,
             # "v": self.handle_v_command,
-            "D": self.handle_detach,
+            "Z": self.handle_add_break,
+            "z": self.handle_remove_break,
         }
 
         key = command[0]
@@ -211,7 +211,7 @@ class GDBStub:
         self.extended_mode = True
         self.send("OK")
 
-    def handle_query(self, command: str) -> None:
+    def handle_general_query(self, command: str) -> None:
         # https://sourceware.org/gdb/onlinedocs/gdb/General-Query-Packets.html
         if command[0] in ["C", "P", "L"]:
             # qC, qP, qL packets are other format and used for threading so not needed
@@ -266,7 +266,7 @@ class GDBStub:
         else:
             self.send("")
 
-    def handle_query_set(self, command: str) -> None:
+    def handle_general_set(self, command: str) -> None:
         name, _, rest = command.partition(":")
         if name == "StartNoAckMode":
             self.send_ack = False
